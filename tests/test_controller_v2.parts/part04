@@ -1,0 +1,139 @@
+T.test_56_runner_uses_qwen_then_gemma_with_split_budget=_v34_test_56_runner_uses_qwen_then_gemma_with_split_budget
+T.test_57_triage_source_edit_aborts_before_gemma=_v34_test_57_triage_source_edit_aborts_before_gemma
+T.test_58_triage_no_change_skips_implementation=_v34_test_58_triage_no_change_skips_implementation
+T.test_59_runner_reports_both_stage_models=_v34_test_59_runner_reports_both_stage_models
+
+
+# v3.5 triage-speed/model-pinning regressions
+def _v35_test_60_triage_guard_blocks_all_pytest_and_broad_inventory(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; st=td/'state'; wt.mkdir(); st.mkdir(); (wt/'scripts').mkdir(); (wt/'scripts/run_tests.sh').write_text('#!/bin/sh\nexit 0\n'); os.chmod(wt/'scripts/run_tests.sh',0o755); (wt/'.venv/bin').mkdir(parents=True); (wt/'.venv/bin/pytest').write_text('#!/bin/sh\nexit 0\n'); os.chmod(wt/'.venv/bin/pytest',0o755)
+  cp=run([sys.executable,str(ROOT/'scripts/agent_phase_guard.py'),'enter','--worktree',str(wt),'--state',str(st),'--token','x']); manifest=Path(cp.stdout.strip()); triage=manifest.parent/'triage-bin'; normal=manifest.parent/'bin'
+  e=os.environ.copy(); e['PATH']=str(triage)+':'+str(normal)+':'+e['PATH']
+  self.assertEqual(run(['pytest','tests/test_x.py'],cwd=wt,env=e,check=False).returncode,86)
+  self.assertEqual(run(['ls','tests/'],cwd=wt,env=e,check=False).returncode,86)
+  self.assertEqual(run(['grep','-r','TODO|FIXME','.'],cwd=wt,env=e,check=False).returncode,86)
+  self.assertEqual(run(['git','status'],cwd=wt,env=e,check=False).returncode,86)
+  e['PATH']=str(normal)+':'+os.environ['PATH']; self.assertEqual(run(['pytest','tests/test_x.py'],cwd=wt,env=e,check=False).returncode,0)
+  run([sys.executable,str(ROOT/'scripts/agent_phase_guard.py'),'exit','--manifest',str(manifest)])
+
+def _v35_test_61_runner_pins_models_and_minimal_triage_reasoning(self):
+ t=RUNNER.read_text(); self.assertIn('TRIAGE_INFER_TOOL',t); self.assertIn('--model "$DISCOVERY_MODEL" --prompt-file "$TRIAGE_PROMPT_FILE"',t); self.assertIn('direct local Ollama /api/chat; JSON schema; no tools',t); self.assertIn('disabled (think=false)',t); self.assertNotIn('TRIAGE_ARGS=(chat',t); self.assertIn('IMPL_ARGS+=(--model "$IMPLEMENTATION_MODEL")',t)
+
+def _v35_test_62_triage_contract_forces_early_plan_without_tests(self):
+ t=RUNNER.read_text(); self.assertIn('You have NO tools and cannot inspect anything beyond the evidence below',t); self.assertIn('Use the supplied context_packet first',t); self.assertIn('IMPLEMENT only when the fresh failure plus supplied production source support a specific LOW-RISK source change',t); self.assertIn('If root cause is ambiguous',t); self.assertIn('Return only the required structured JSON decision',t)
+
+T.test_60_triage_guard_blocks_all_pytest_and_broad_inventory=_v35_test_60_triage_guard_blocks_all_pytest_and_broad_inventory
+T.test_61_runner_pins_models_and_minimal_triage_reasoning=_v35_test_61_runner_pins_models_and_minimal_triage_reasoning
+T.test_62_triage_contract_forces_early_plan_without_tests=_v35_test_62_triage_contract_forces_early_plan_without_tests
+
+
+def _v35_test_63_installer_safely_migrates_only_old_triage_defaults(self):
+ t=(ROOT/'scripts/install_self_improvement_macos.sh').read_text(); self.assertIn("DISCOVERY_RUNTIME_SECONDS=120",t); self.assertIn("DISCOVERY_RUNTIME_SECONDS=150",t); self.assertIn("DISCOVERY_TURNS=6",t); self.assertIn("DISCOVERY_TURNS=4",t); self.assertIn("DISCOVERY_REASONING=minimal",t); self.assertIn("IMPLEMENTATION_REASONING=medium",t); self.assertIn('Never alter AUTO_PROMOTE_MODE',t)
+
+def _v35_test_64_preflight_reports_model_and_reasoning_override_support(self):
+ t=(ROOT/'scripts/preflight_macos.sh').read_text(); self.assertIn('--model supported (implementation model pinning)',t); self.assertIn('--reasoning supported (implementation reasoning)',t)
+
+T.test_63_installer_safely_migrates_only_old_triage_defaults=_v35_test_63_installer_safely_migrates_only_old_triage_defaults
+T.test_64_preflight_reports_model_and_reasoning_override_support=_v35_test_64_preflight_reports_model_and_reasoning_override_support
+
+# v3.6 context-compatible triage model regressions
+OLLAMA_CHECK=ROOT/'scripts/ollama_model_check.py'
+
+def _v36_test_65_discovery_model_is_qwen35_mlx(self):
+ t=RUNNER.read_text(); policy=(ROOT/'self-improvement/promotion_policy.env').read_text(); pre=(ROOT/'scripts/preflight_macos.sh').read_text()
+ self.assertIn('DISCOVERY_MODEL="${DISCOVERY_MODEL:-qwen3.5:4b-mlx}"',t)
+ self.assertIn('DISCOVERY_MODEL=qwen3.5:4b-mlx',policy)
+ self.assertIn('qwen3.5:4b-mlx',pre)
+ self.assertNotIn('DISCOVERY_MODEL="${DISCOVERY_MODEL:-qwen3:8b}"',t)
+
+def _v36_test_66_installer_migrates_only_exact_old_discovery_model(self):
+ t=(ROOT/'scripts/install_self_improvement_macos.sh').read_text()
+ self.assertIn("if line == 'DISCOVERY_MODEL=qwen3:8b': line='DISCOVERY_MODEL=qwen3.5:4b-mlx'",t)
+ self.assertIn('Never alter AUTO_PROMOTE_MODE or unrelated user policy',t)
+ self.assertIn('ollama_model_check.py',t)
+
+def _v36_test_67_ollama_context_checker_rejects_sub64k(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); fake=td/'ollama'; fake.write_text('#!/bin/sh\nprintf "  Model\\n    architecture qwen3\\n    context length 40960\\n"\n'); os.chmod(fake,0o755)
+  cp=run([sys.executable,str(OLLAMA_CHECK),'--model','qwen3:8b','--minimum','64000','--ollama-bin',str(fake)],check=False)
+  self.assertEqual(cp.returncode,3); self.assertIn('40960',cp.stdout)
+  fake.write_text('#!/bin/sh\nprintf "  Model\\n    architecture qwen35\\n    context length 262144\\n"\n'); os.chmod(fake,0o755)
+  cp=run([sys.executable,str(OLLAMA_CHECK),'--model','qwen3.5:4b-mlx','--minimum','64000','--ollama-bin',str(fake)])
+  self.assertIn('262144',cp.stdout)
+
+T.test_65_discovery_model_is_qwen35_mlx=_v36_test_65_discovery_model_is_qwen35_mlx
+T.test_66_installer_migrates_only_exact_old_discovery_model=_v36_test_66_installer_migrates_only_exact_old_discovery_model
+T.test_67_ollama_context_checker_rejects_sub64k=_v36_test_67_ollama_context_checker_rejects_sub64k
+
+def _v36_test_68_preflight_enforces_context_and_pull_hint(self):
+ t=(ROOT/'scripts/preflight_macos.sh').read_text()
+ self.assertIn('ollama_model_check.py',t)
+ self.assertIn('--minimum 64000',t)
+ self.assertIn('Install it with: ollama pull $model',t)
+ self.assertIn('local triage + implementation models/context',t); self.assertIn('direct local Ollama structured inference',t)
+
+T.test_68_preflight_enforces_context_and_pull_hint=_v36_test_68_preflight_enforces_context_and_pull_hint
+
+
+# v3.7 controller-owned triage handoff regressions
+TRIAGE_OUTPUT=ROOT/'scripts/triage_output.py'
+
+def _v37_test_69_triage_output_materializes_valid_json(self):
+ wt=self.r/'triage-out-wt';wt.mkdir();(wt/'tests').mkdir();(wt/'agent').mkdir()
+ transcript=self.r/'triage-transcript.txt';plan=wt/'.hermes-si-plan.json'
+ obj={'decision':'IMPLEMENT','summary':'x','problem':'p','fresh_evidence':'fresh current evidence','files':['agent/x.py'],'targeted_tests':['tests/test_x.py::test_one'],'risk':'low','expected_benefit':'faster'}
+ transcript.write_text('prefix\n'+json.dumps(obj)+'\n')
+ cp=run([sys.executable,str(TRIAGE_OUTPUT),'--transcript',str(transcript),'--plan',str(plan),'--worktree',str(wt)])
+ d=json.loads(cp.stdout);self.assertEqual(d['source'],'transcript-json');self.assertEqual(d['plan']['decision'],'IMPLEMENT');self.assertTrue(plan.exists())
+
+def _v37_test_70_triage_output_safe_nochange_fallback_only(self):
+ wt=self.r/'triage-fallback-wt';wt.mkdir(); transcript=self.r/'triage-fallback.txt';plan=wt/'.hermes-si-plan.json'
+ transcript.write_text('Summary\nDecision: NO_CHANGE\nRationale: insufficient evidence\n')
+ cp=run([sys.executable,str(TRIAGE_OUTPUT),'--transcript',str(transcript),'--plan',str(plan),'--worktree',str(wt)])
+ d=json.loads(cp.stdout);self.assertEqual(d['source'],'safe-no-change-fallback');self.assertEqual(d['plan']['decision'],'NO_CHANGE')
+ plan.unlink();transcript.write_text('Decision: IMPLEMENT\nI think agent/x.py should change.\n')
+ cp=run([sys.executable,str(TRIAGE_OUTPUT),'--transcript',str(transcript),'--plan',str(plan),'--worktree',str(wt)],check=False)
+ self.assertEqual(cp.returncode,2);self.assertFalse(plan.exists());self.assertIn('INVALID_TRIAGE_OUTPUT',cp.stdout)
+
+def _v37_test_71_runner_accepts_nochange_from_transcript(self):
+ c,e=self.controller(10);e['FAKE_MODE']='triage_text_nochange';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=30);self.assertEqual(cp.returncode,0)
+ rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Plan source: `safe-no-change-fallback`',rep);self.assertIn('Triage selected NO_CHANGE',rep);self.assertNotIn('## Implementation/Review Agent',rep)
+
+def _v37_test_72_runner_accepts_structured_transcript_and_starts_gemma(self):
+ c,e=self.controller(10);e['FAKE_MODE']='triage_text_implement';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=30);self.assertEqual(cp.returncode,0)
+ rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Plan source: `transcript-json`',rep);self.assertIn('## Implementation/Review Agent',rep);self.assertIn('VALIDATED_AWAITING_ENABLEMENT',rep)
+
+T.test_69_triage_output_materializes_valid_json=_v37_test_69_triage_output_materializes_valid_json
+T.test_70_triage_output_safe_nochange_fallback_only=_v37_test_70_triage_output_safe_nochange_fallback_only
+T.test_71_runner_accepts_nochange_from_transcript=_v37_test_71_runner_accepts_nochange_from_transcript
+T.test_72_runner_accepts_structured_transcript_and_starts_gemma=_v37_test_72_runner_accepts_structured_transcript_and_starts_gemma
+
+# v3.8 controller-owned rotating fresh probe regressions
+FRESH_PROBE=ROOT/'scripts/fresh_probe.py'
+
+def _v38_test_73_fresh_probe_selects_safe_failure_and_blocks_risky(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests').mkdir(parents=True)
+  # One safe core failure and two excluded high-risk/external surfaces.
+  safe='tests/test_hermes_state.py'; (wt/safe).write_text('def test_x(): pass\n')
+  (wt/'tests/test_update_yes_flag.py').write_text('def test_x(): pass\n')
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/test_hermes_state.py::test_x - AssertionError: fresh"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'sig','failure_files':{safe:1,'tests/hermes_cli/test_update_yes_flag.py':3,'tests/tools/test_daytona_environment.py':15}}}
+  cp=run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5'])
+  d=json.loads(cp.stdout); self.assertEqual(d['status'],'FAIL'); self.assertEqual(d['target'],safe); self.assertIn('fresh',d['output'])
+
+def _v38_test_74_fresh_probe_rotates_across_safe_failures(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/agent').mkdir(parents=True)
+  a='tests/agent/test_a.py'; b='tests/agent/test_b.py'; (wt/a).write_text(''); (wt/b).write_text('')
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho fail\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'sig2','failure_files':{a:1,b:1}}}
+  cmd=[sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5']
+  one=json.loads(run(cmd).stdout); two=json.loads(run(cmd).stdout); self.assertNotEqual(one['target'],two['target']); self.assertEqual({one['target'],two['target']},{a,b})
+
+def _v38_test_75_runner_passes_fresh_probe_to_triage(self):
