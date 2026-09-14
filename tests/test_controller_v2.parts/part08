@@ -105,25 +105,9 @@ def _v317_test_102_context_includes_bounded_local_test_helper(self):
  import tempfile
  with tempfile.TemporaryDirectory() as td:
   td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/run_agent').mkdir(parents=True); (wt/'agent').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
-  test='''from unittest.mock import MagicMock
-
-class TestSwitch:
-    def _make_fake_agent(self):
-        agent = MagicMock()
-        agent.model = "old"
-        return agent
-
-    def test_primary_runtime_includes_reasoning_config(self):
-        agent = self._make_fake_agent()
-        switch_model(agent)
-        assert hasattr(agent, "_primary_runtime")
-        assert "reasoning_config" in agent._primary_runtime
-'''
+  test='''from unittest.mock import MagicMock\n\nclass TestSwitch:\n    def _make_fake_agent(self):\n        agent = MagicMock()\n        agent.model = "old"\n        return agent\n\n    def test_primary_runtime_includes_reasoning_config(self):\n        agent = self._make_fake_agent()\n        switch_model(agent)\n        assert hasattr(agent, "_primary_runtime")\n        assert "reasoning_config" in agent._primary_runtime\n'''
   (wt/'tests/run_agent/test_local_helper.py').write_text(test)
-  (wt/'agent/runtime.py').write_text('''def switch_model(agent):
-    agent.reasoning_config = {"effort": "xhigh"}
-    agent._primary_runtime = {"reasoning_config": dict(agent.reasoning_config)}
-'''); run(['git','add','.'],cwd=wt)
+  (wt/'agent/runtime.py').write_text('''def switch_model(agent):\n    agent.reasoning_config = {"effort": "xhigh"}\n    agent._primary_runtime = {"reasoning_config": dict(agent.reasoning_config)}\n'''); run(['git','add','.'],cwd=wt)
   fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/run_agent/test_local_helper.py::TestSwitch::test_primary_runtime_includes_reasoning_config"\necho "tests/run_agent/test_local_helper.py:13: in test_primary_runtime_includes_reasoning_config"\necho "E   AssertionError: assert reason in MagicMock"\nexit 1\n'); os.chmod(fake,0o755)
   baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'local-test-helper','failure_files':{'tests/run_agent/test_local_helper.py':1}}}
   d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','1']).stdout)
@@ -144,38 +128,7 @@ def _v318_test_103_patched_direct_helper_outranks_unrelated_guards(self):
  import tempfile
  with tempfile.TemporaryDirectory() as td:
   td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/tools').mkdir(parents=True); (wt/'tools').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
-  (wt/'tests/tools/test_file_tools.py').write_text('''from unittest.mock import MagicMock, patch
-
-class TestWriteFileHandler:
-    @patch("tools.file_tools._get_file_ops")
-    def test_writes_content(self, mock_get):
-        mock_ops = MagicMock()
-        mock_get.return_value = mock_ops
-        result = write_file_tool("/tmp/out.txt", "hello world!\\n")
-        assert result["status"] == "ok"
-        mock_ops.write_file.assert_called_once_with("/tmp/out.txt", "hello world!\\n")
-''')
-  (wt/'tools/file_tools.py').write_text('''def _check_sensitive_path(path):
-    return None
-
-def _check_binary_document_write(path):
-    return None
-
-def _resolve_path_for_task(path):
-    return path.replace("/tmp/", "/private/tmp/")
-
-def _get_file_ops():
-    return object()
-
-def write_file_tool(path, content):
-    if _check_sensitive_path(path):
-        return {"status": "error"}
-    if _check_binary_document_write(path):
-        return {"status": "error"}
-    resolved = _resolve_path_for_task(path)
-    ops = _get_file_ops()
-    ops.write_file(resolved, content)
-    return {"status": "ok"}
-'''); run(['git','add','.'],cwd=wt)
-  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/tools/test_file_tools.py::TestWriteFileHandler::test_writes_content"\necho "tests/tools/test_file_tools.py:10: in test_writes_content"\necho "E Expected: write_file(\x27/tmp/out.txt\x27, ...)"\necho "E Actual: write_file(\x27/private/tmp/out.txt\x27, ...)"\nexit 1\n'); os.chmod(fake,0o755)
+  (wt/'tests/tools/test_file_tools.py').write_text('''from unittest.mock import MagicMock, patch\n\nclass TestWriteFileHandler:\n    @patch("tools.file_tools._get_file_ops")\n    def test_writes_content(self, mock_get):\n        mock_ops = MagicMock()\n        mock_get.return_value = mock_ops\n        result = write_file_tool("/tmp/out.txt", "hello world!\\n")\n        assert result["status"] == "ok"\n        mock_ops.write_file.assert_called_once_with("/tmp/out.txt", "hello world!\\n")\n''')
+  (wt/'tools/file_tools.py').write_text('''def _check_sensitive_path(path):\n    return None\n\ndef _check_binary_document_write(path):\n    return None\n\ndef _resolve_path_for_task(path):\n    return path.replace("/tmp/", "/private/tmp/")\n\ndef _get_file_ops():\n    return object()\n\ndef write_file_tool(path, content):\n    if _check_sensitive_path(path):\n        return {"status": "error"}\n    if _check_binary_document_write(path):\n        return {"status": "error"}\n    resolved = _resolve_path_for_task(path)\n    ops = _get_file_ops()\n    ops.write_file(resolved, content)\n    return {"status": "ok"}\n'''); run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/tools/test_file_tools.py::TestWriteFileHandler::test_writes_content"\necho "tests/tools/test_file_tools.py:10: in test_writes_content"\necho "E Expected: write_file(\\x27/tmp/out.txt\\x27, ...)"\necho "E Actual: write_file(\\x27/private/tmp/out.txt\\x27, ...)"\nexit 1\n'); os.chmod(fake,0o755)
   baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'patched-causal-rank','failure_files':{'tests/tools/test_file_tools.py':1}}}
