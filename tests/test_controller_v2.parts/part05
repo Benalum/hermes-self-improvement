@@ -1,0 +1,116 @@
+ t=RUNNER.read_text(); self.assertIn('FRESH_PROBE_TOOL',t); self.assertIn('## Controller Fresh Candidate Probe',t); self.assertIn('Controller selected candidate evidence: $TRIAGE_EVIDENCE_JSON',t); self.assertIn('The controller fresh candidate probe is the ONLY baseline-failure evidence that is fresh today',t); self.assertIn('direct local Ollama /api/chat; JSON schema; no tools',t)
+
+def _v38_test_76_installer_preflight_and_policy_include_fresh_probe(self):
+ ins=(ROOT/'scripts/install_self_improvement_macos.sh').read_text(); pre=(ROOT/'scripts/preflight_macos.sh').read_text(); pol=(ROOT/'self-improvement/promotion_policy.env').read_text()
+ self.assertIn('fresh_probe.py',ins); self.assertIn('fresh_probe.py',pre); self.assertIn('FRESH_PROBE_TIMEOUT_SECONDS=45',pol); self.assertIn('added fresh probe timeout',ins)
+
+T.test_73_fresh_probe_selects_safe_failure_and_blocks_risky=_v38_test_73_fresh_probe_selects_safe_failure_and_blocks_risky
+T.test_74_fresh_probe_rotates_across_safe_failures=_v38_test_74_fresh_probe_rotates_across_safe_failures
+T.test_75_runner_passes_fresh_probe_to_triage=_v38_test_75_runner_passes_fresh_probe_to_triage
+T.test_76_installer_preflight_and_policy_include_fresh_probe=_v38_test_76_installer_preflight_and_policy_include_fresh_probe
+
+# v3.9 controller-owned probe context packet regressions
+
+def _v39_test_77_fresh_probe_includes_test_and_source_context(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests').mkdir(parents=True)
+  run(['git','init','-q'],cwd=wt)
+  test='''class TestFTS5Search:\n    def test_projection(self):\n        def local_helper():\n            return 1\n        state = DummyState()\n        rows = state.search_messages(fields=("session_id", "snippet"))\n        assert local_helper() == 2\n'''
+  (wt/'tests/test_hermes_state.py').write_text(test)
+  (wt/'hermes_state.py').write_text('''class DummyState:\n    def search_messages(self, fields=None):\n        if fields:\n            return []\n        return [1]\n''')
+  run(['git','add','tests/test_hermes_state.py','hermes_state.py'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/test_hermes_state.py::TestFTS5Search::test_projection - assert 1 == 2"\necho "tests/test_hermes_state.py:6: in test_projection"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'ctx','failure_files':{'tests/test_hermes_state.py':1}}}
+  cp=run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5'])
+  d=json.loads(cp.stdout); c=d['context_packet']; self.assertIn('test_projection',c['test_excerpt']); self.assertIn('search_messages',c['candidate_symbols']); self.assertTrue(c['source_definitions']); self.assertEqual(c['source_definitions'][0]['path'],'hermes_state.py'); self.assertIn('def search_messages',c['source_definitions'][0]['excerpt'])
+
+def _v39_test_78_context_packet_is_bounded_and_production_only(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
+  (wt/'tests/test_hermes_state.py').write_text('def test_x():\n    thing.search_messages()\n    assert False\n')
+  (wt/'tests/helper.py').write_text('def search_messages():\n    return "test helper"\n')
+  (wt/'core.py').write_text('def search_messages():\n'+'    x = 1\n'*500+'    return x\n')
+  run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/test_hermes_state.py::test_x - AssertionError"\necho "tests/test_hermes_state.py:3: in test_x"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'bound','failure_files':{'tests/test_hermes_state.py':1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5']).stdout)
+  defs=d['context_packet']['source_definitions']; self.assertTrue(defs); self.assertNotIn('/tests/', '/'+defs[0]['path']); self.assertLessEqual(len(defs[0]['excerpt']),7100); self.assertLessEqual(len(defs),2)
+
+def _v39_test_79_runner_uses_probe_context_before_more_discovery(self):
+ t=RUNNER.read_text(); self.assertIn('Use the supplied context_packet first',t); self.assertIn('focused matching production source windows',t); self.assertIn('If root cause is ambiguous',t); self.assertIn('direct local Ollama /api/chat; JSON schema; no tools',t)
+
+def _v39_test_80_fresh_probe_python39_compatible(self):
+ import ast
+ t=FRESH_PROBE.read_text(); ast.parse(t,feature_version=(3,9)); self.assertIn('source_definitions',t); self.assertIn('candidate_symbols',t)
+
+T.test_77_fresh_probe_includes_test_and_source_context=_v39_test_77_fresh_probe_includes_test_and_source_context
+T.test_78_context_packet_is_bounded_and_production_only=_v39_test_78_context_packet_is_bounded_and_production_only
+T.test_79_runner_uses_probe_context_before_more_discovery=_v39_test_79_runner_uses_probe_context_before_more_discovery
+T.test_80_fresh_probe_python39_compatible=_v39_test_80_fresh_probe_python39_compatible
+
+
+# v3.10 direct local structured triage regressions
+TRIAGE_INFER=ROOT/'scripts/triage_infer.py'
+
+def _v310_test_81_triage_infer_uses_schema_no_tools_and_think_false(self):
+ import http.server, threading
+ seen={}
+ class H(http.server.BaseHTTPRequestHandler):
+  def log_message(self,*a): pass
+  def do_POST(self):
+   n=int(self.headers.get('Content-Length','0')); body=json.loads(self.rfile.read(n)); seen.update(body)
+   obj={'decision':'NO_CHANGE','summary':'none','problem':'insufficient','fresh_evidence':'fresh packet','files':[],'targeted_tests':[],'risk':'low','expected_benefit':'avoid speculation'}
+   data=json.dumps({'message':{'role':'assistant','content':json.dumps(obj)},'done':True}).encode(); self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
+ srv=http.server.ThreadingHTTPServer(('127.0.0.1',0),H);th=threading.Thread(target=srv.serve_forever,daemon=True);th.start()
+ try:
+  prompt=self.r/'prompt';prompt.write_text('fresh evidence')
+  cp=run([sys.executable,str(TRIAGE_INFER),'--model','qwen3.5:4b-mlx','--prompt-file',str(prompt),'--endpoint',f'http://127.0.0.1:{srv.server_port}/api/chat','--timeout','5'])
+  self.assertEqual(json.loads(cp.stdout)['decision'],'NO_CHANGE');self.assertFalse(seen.get('think'));self.assertIn('format',seen);self.assertNotIn('tools',seen);self.assertEqual(seen['options']['temperature'],0)
+ finally: srv.shutdown();srv.server_close()
+
+def _v310_test_82_triage_infer_rejects_nonlocal_endpoint(self):
+ prompt=self.r/'prompt2';prompt.write_text('x');cp=run([sys.executable,str(TRIAGE_INFER),'--model','qwen3.5:4b-mlx','--prompt-file',str(prompt),'--endpoint','https://example.com/api/chat','--timeout','1'],check=False);self.assertEqual(cp.returncode,2);self.assertIn('loopback',cp.stdout)
+
+def _v310_test_83_runner_direct_triage_has_no_hermes_tools(self):
+ t=RUNNER.read_text();self.assertIn('Discovery/Triage Classifier',t);self.assertIn('direct local Ollama /api/chat; JSON schema; no tools',t);self.assertNotIn('TRIAGE_ARGS=(chat',t);self.assertNotIn('HERMES_INFERENCE_MODEL="$DISCOVERY_MODEL"',t);self.assertIn('TRIAGE_INFER_TOOL',t)
+
+def _v310_test_84_guard_is_installed_only_after_valid_implement(self):
+ t=RUNNER.read_text();guard='AGENT_GUARD_MANIFEST="$("$HERMES_PY" "$AGENT_PHASE_GUARD"';decision='if [[ "$PLAN_DECISION" == NO_CHANGE ]]';self.assertIn(guard,t);self.assertIn(decision,t);self.assertGreater(t.index(guard),t.index(decision))
+
+def _v310_test_85_direct_nochange_skips_gemma_cleanly(self):
+ c,e=self.controller(10);e['FAKE_MODE']='none';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=60);self.assertEqual(cp.returncode,0);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Discovery/Triage Classifier',rep);self.assertIn('Triage selected NO_CHANGE',rep);self.assertNotIn('## Implementation/Review Agent',rep)
+
+def _v310_test_86_direct_implement_starts_gemma(self):
+ c,e=self.controller(10);e['FAKE_MODE']='safe';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=60);self.assertEqual(cp.returncode,0);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Discovery/Triage Classifier',rep);self.assertIn('Plan source: `transcript-json`',rep);self.assertIn('## Implementation/Review Agent',rep);self.assertIn('VALIDATED_AWAITING_ENABLEMENT',rep)
+
+T.test_81_triage_infer_uses_schema_no_tools_and_think_false=_v310_test_81_triage_infer_uses_schema_no_tools_and_think_false
+T.test_82_triage_infer_rejects_nonlocal_endpoint=_v310_test_82_triage_infer_rejects_nonlocal_endpoint
+T.test_83_runner_direct_triage_has_no_hermes_tools=_v310_test_83_runner_direct_triage_has_no_hermes_tools
+T.test_84_guard_is_installed_only_after_valid_implement=_v310_test_84_guard_is_installed_only_after_valid_implement
+T.test_85_direct_nochange_skips_gemma_cleanly=_v310_test_85_direct_nochange_skips_gemma_cleanly
+T.test_86_direct_implement_starts_gemma=_v310_test_86_direct_implement_starts_gemma
+def _v310_override_test_57_direct_triage_is_structurally_readonly(self):
+ t=RUNNER.read_text(); self.assertIn('cd "$STATE"',t); self.assertIn('TRIAGE_INFER_TOOL',t); self.assertNotIn('--worktree "$WORKTREE" --model "$DISCOVERY_MODEL"',t); self.assertIn('PLAN_JSON=',t); self.assertIn('cd "$WORKTREE"\n          UV_FOR_AGENT=',t)
+
+T.test_57_triage_source_edit_aborts_before_gemma=_v310_override_test_57_direct_triage_is_structurally_readonly
+
+
+
+def _v310_test_87_implement_plan_is_bound_to_fresh_probe_evidence(self):
+ wt=self.r/'evidence-wt';wt.mkdir();(wt/'tests').mkdir();(wt/'agent').mkdir();(wt/'agent/x.py').write_text('X=1\n');(wt/'agent/y.py').write_text('Y=1\n');(wt/'tests/test_x.py').write_text('def test_one(): pass\n')
+ evidence={'status':'FAIL','target':'tests/test_x.py','context_packet':{'failure_node':'tests/test_x.py::test_one','source_definitions':[{'path':'agent/x.py','symbol':'x','excerpt':'x'}]}}
+ good=wt/'good.json';good.write_text(json.dumps({'decision':'IMPLEMENT','summary':'x','problem':'p','fresh_evidence':'fresh','files':['agent/x.py'],'targeted_tests':['tests/test_x.py::test_one'],'risk':'low','expected_benefit':'fix'}))
+ cp=run([sys.executable,str(TRIAGE_PLAN_TOOL),'--plan',str(good),'--worktree',str(wt),'--evidence-json',json.dumps(evidence)]);self.assertIn('IMPLEMENT',cp.stdout)
+ bad=wt/'bad2.json';bad.write_text(json.dumps({'decision':'IMPLEMENT','summary':'x','problem':'p','fresh_evidence':'fresh','files':['agent/y.py'],'targeted_tests':['tests/test_x.py::test_one'],'risk':'low','expected_benefit':'fix'}))
+ cp=run([sys.executable,str(TRIAGE_PLAN_TOOL),'--plan',str(bad),'--worktree',str(wt),'--evidence-json',json.dumps(evidence)],check=False);self.assertEqual(cp.returncode,2);self.assertIn('not grounded',cp.stdout)
+
+T.test_87_implement_plan_is_bound_to_fresh_probe_evidence=_v310_test_87_implement_plan_is_bound_to_fresh_probe_evidence
+
+
+
+# v3.10 evidence-grounded runner implementation fixtures
+def _v310_ground_knownred(self, c):
+ evidence_path=c/'state/ground-red.json'
+ evidence={"cache":"miss","cache_file":str(evidence_path),"baseline_health":"KNOWN_RED","environment_ready":True,"tests":{"exit":1,"seconds":1,"output":"red"},"test_failure_summary":{"failure_files":{"tests/test_ok.py":1},"no_run_files":[],"failed_test_count":1,"signature":"grounded"},"dev_sync":{"exit":0,"seconds":0.1,"mode":"frozen","source":"test","executable":"/bin/true","output":"sync ok"},"cli_version":{"exit":0,"seconds":0.1,"output":"ok"},"cli_help":{"exit":0,"seconds":0.1,"output":"ok"},"test_command":"scripts/run_tests.sh"}
