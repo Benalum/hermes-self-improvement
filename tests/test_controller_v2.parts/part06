@@ -1,0 +1,136 @@
+ _write_knownred_validator(c/'scripts/baseline_validate.py', evidence)
+ probe={"status":"FAIL","target":"tests/test_ok.py","exit":1,"seconds":0.1,"baseline_failure_count":1,"output":"FAILED tests/test_ok.py::test_ok - synthetic","context_packet":{"failure_node":"tests/test_ok.py::test_ok","failure_line":1,"candidate_symbols":["demo"],"test_excerpt":"def test_ok(): assert True","source_definitions":[{"path":"skills/demo/SKILL.md","symbol":"demo","line":1,"excerpt":"# synthetic candidate"}]}}
+ (c/'scripts/fresh_probe.py').write_text('import json\nprint('+repr(json.dumps(probe))+')\n')
+ return evidence
+
+def _v310_fast_transition_harness(self, c):
+ gate = 'import argparse\np=argparse.ArgumentParser();p.add_argument("--report",required=True)\nfor x in ("--production","--worktree","--baseline","--policy","--python","--base","--baseline-evidence"): p.add_argument(x)\na=p.parse_args()\nwith open(a.report,"a") as f: f.write("\\n## Candidate Gate\\n\\n- Decision: `VALIDATED_RESEARCH_ONLY_BASELINE_RED`\\n- Production modified: `no`\\n")\nprint("CANDIDATE_GATE=VALIDATED_RESEARCH_ONLY_BASELINE_RED")\n'
+ (c/'scripts/candidate_gate.py').write_text(gate)
+ cleanup = 'import argparse,shutil,subprocess,pathlib\np=argparse.ArgumentParser();p.add_argument("--production",required=True);p.add_argument("--worktrees",required=True);p.add_argument("--keep")\na=p.parse_args()\nroot=pathlib.Path(a.worktrees)\nfor w in list(root.iterdir()) if root.exists() else []:\n subprocess.run(["git","-C",a.production,"worktree","remove","--force",str(w)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n shutil.rmtree(w,ignore_errors=True)\nsubprocess.run(["git","-C",a.production,"worktree","prune"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n'
+ (c/'scripts/cleanup_worktrees.py').write_text(cleanup)
+
+def _v310_override_test_72_grounded_structured_implement(self):
+ c,e=self.controller(10);_v310_ground_knownred(self,c);_v310_fast_transition_harness(self,c);e['FAKE_MODE']='safe';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=60);self.assertEqual(cp.returncode,0)
+ rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Plan source: `transcript-json`',rep);self.assertIn('## Implementation/Review Agent',rep);self.assertIn('VALIDATED_RESEARCH_ONLY_BASELINE_RED',rep);self.assertIn('Production modified: `no`',rep)
+
+def _v310_override_test_86_grounded_direct_implement(self):
+ c,e=self.controller(10);_v310_ground_knownred(self,c);_v310_fast_transition_harness(self,c);e['FAKE_MODE']='safe';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=60);self.assertEqual(cp.returncode,0)
+ rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Discovery/Triage Classifier',rep);self.assertIn('Plan source: `transcript-json`',rep);self.assertIn('## Implementation/Review Agent',rep);self.assertIn('VALIDATED_RESEARCH_ONLY_BASELINE_RED',rep);self.assertIn('Production modified: `no`',rep)
+
+def _v3101_override_test_59_grounded_stage_models(self):
+ c,e=self.controller(10);_v310_ground_knownred(self,c);_v310_fast_transition_harness(self,c);e['FAKE_MODE']='safe';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=60);self.assertEqual(cp.returncode,0)
+ rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('## Discovery/Triage Classifier',rep);self.assertIn('Model: `qwen3.5:4b-mlx`',rep);self.assertIn('Plan source: `transcript-json`',rep);self.assertIn('## Implementation/Review Agent',rep);self.assertIn('Model: `gemma4:31b-mlx`',rep);self.assertIn('VALIDATED_RESEARCH_ONLY_BASELINE_RED',rep);self.assertIn('Production modified: `no`',rep)
+
+T.test_59_runner_reports_both_stage_models=_v3101_override_test_59_grounded_stage_models
+T.test_72_runner_accepts_structured_transcript_and_starts_gemma=_v310_override_test_72_grounded_structured_implement
+T.test_86_direct_implement_starts_gemma=_v310_override_test_86_grounded_direct_implement
+
+# v3.10.2 direct-classifier NO_CHANGE contract hotfix
+def _v3102_override_test_71_direct_json_nochange(self):
+ c,e=self.controller(10);e['FAKE_MODE']='triage_text_nochange';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=30);self.assertEqual(cp.returncode,0)
+ rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('## Discovery/Triage Classifier',rep);self.assertIn('Plan source: `transcript-json`',rep);self.assertIn('Triage selected NO_CHANGE',rep);self.assertNotIn('## Implementation/Review Agent',rep);self.assertIn('Decision: `NO_CHANGE`',rep);self.assertIn('Production modified: `no`',rep)
+
+T.test_71_runner_accepts_nochange_from_transcript=_v3102_override_test_71_direct_json_nochange
+
+
+
+# v3.11 bounded multi-probe / non-actionable environment skipping regressions
+
+def _v311_test_88_probe_skips_missing_dependency_and_selects_next_failure(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/agent').mkdir(parents=True)
+  a='tests/agent/test_a.py'; b='tests/agent/test_b.py'; (wt/a).write_text('def test_a(): pass\n'); (wt/b).write_text('def test_b(): pass\n')
+  fake=td/'fake-python'; fake.write_text('''#!/bin/sh
+case "$*" in
+  *test_a.py*)
+    echo "FAILED tests/agent/test_a.py::test_a"
+    echo "ImportError: The 'anthropic' package is required for the Anthropic provider. Install it with: pip install 'anthropic>=0.39.0'"
+    exit 1;;
+  *test_b.py*)
+    echo "FAILED tests/agent/test_b.py::test_b - AssertionError: actionable"
+    echo "tests/agent/test_b.py:1: in test_b"
+    exit 1;;
+esac
+exit 125
+'''); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'multi-dep','failure_files':{a:1,b:1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','3']).stdout)
+  self.assertEqual(d['status'],'FAIL'); self.assertEqual(d['target'],b); self.assertEqual(d['attempt_count'],2)
+  self.assertEqual(d['attempts'][0]['status'],'NON_ACTIONABLE_ENVIRONMENT'); self.assertIn('anthropic',d['attempts'][0]['reason']); self.assertEqual(d['attempts'][1]['target'],b)
+
+
+def _v311_test_89_probe_skips_resolved_pass_and_selects_next_failure(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/agent').mkdir(parents=True)
+  a='tests/agent/test_a.py'; b='tests/agent/test_b.py'; (wt/a).write_text(''); (wt/b).write_text('')
+  fake=td/'fake-python'; fake.write_text('''#!/bin/sh
+case "$*" in
+  *test_a.py*) echo "1 passed in 0.01s"; exit 0;;
+  *test_b.py*) echo "FAILED tests/agent/test_b.py::test_b - AssertionError"; exit 1;;
+esac
+exit 125
+'''); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'multi-pass','failure_files':{a:1,b:1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','2']).stdout)
+  self.assertEqual(d['status'],'FAIL'); self.assertEqual(d['target'],b); self.assertEqual(d['attempts'][0]['status'],'PASS'); self.assertEqual(d['attempt_count'],2)
+
+
+def _v311_test_90_probe_attempt_budget_is_bounded_and_cursor_advances(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/agent').mkdir(parents=True)
+  files=['tests/agent/test_a.py','tests/agent/test_b.py','tests/agent/test_c.py']
+  for rel in files: (wt/rel).write_text('')
+  fake=td/'fake-python'; fake.write_text('''#!/bin/sh
+echo "ModuleNotFoundError: No module named 'optional_dep'"
+exit 1
+'''); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'multi-bound','failure_files':{x:1 for x in files}}}
+  base=[sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5']
+  one=json.loads(run(base+['--max-attempts','2']).stdout)
+  self.assertEqual(one['status'],'NO_ACTIONABLE_FAILURE'); self.assertEqual(one['attempt_count'],2); self.assertEqual(len(one['attempts']),2); self.assertTrue(all(x['status']=='NON_ACTIONABLE_ENVIRONMENT' for x in one['attempts']))
+  two=json.loads(run(base+['--max-attempts','1']).stdout)
+  self.assertEqual(two['attempts'][0]['target'],files[2])
+
+
+def _v311_test_91_policy_runner_installer_preflight_include_probe_attempt_cap(self):
+ runner=RUNNER.read_text(); ins=(ROOT/'scripts/install_self_improvement_macos.sh').read_text(); pre=(ROOT/'scripts/preflight_macos.sh').read_text(); pol=(ROOT/'self-improvement/promotion_policy.env').read_text()
+ self.assertIn('FRESH_PROBE_MAX_ATTEMPTS="${FRESH_PROBE_MAX_ATTEMPTS:-3}"',runner)
+ self.assertIn('--max-attempts "$FRESH_PROBE_MAX_ATTEMPTS"',runner)
+ self.assertIn('NO_ACTIONABLE_FAILURE',runner)
+ self.assertIn('FRESH_PROBE_MAX_ATTEMPTS=3',pol)
+ self.assertIn('added fresh probe max attempts',ins)
+ self.assertIn('fresh probe max attempts',pre)
+
+T.test_88_probe_skips_missing_dependency_and_selects_next_failure=_v311_test_88_probe_skips_missing_dependency_and_selects_next_failure
+T.test_89_probe_skips_resolved_pass_and_selects_next_failure=_v311_test_89_probe_skips_resolved_pass_and_selects_next_failure
+T.test_90_probe_attempt_budget_is_bounded_and_cursor_advances=_v311_test_90_probe_attempt_budget_is_bounded_and_cursor_advances
+T.test_91_policy_runner_installer_preflight_include_probe_attempt_cap=_v311_test_91_policy_runner_installer_preflight_include_probe_attempt_cap
+
+
+
+def _v311_test_92_probe_timeout_is_shared_across_attempts(self):
+ import tempfile, time as _time
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/agent').mkdir(parents=True)
+  files=['tests/agent/test_a.py','tests/agent/test_b.py','tests/agent/test_c.py']
+  for rel in files: (wt/rel).write_text('')
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\nsleep 0.7\necho "1 passed"\nexit 0\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'shared-budget','failure_files':{x:1 for x in files}}}
+  start=_time.perf_counter()
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','1','--max-attempts','3']).stdout)
+  elapsed=_time.perf_counter()-start
+  self.assertLess(elapsed,2.0); self.assertEqual(d['probe_budget_seconds'],1); self.assertLessEqual(d['attempt_count'],2); self.assertIn(d['status'],{'TIMEOUT','NO_ACTIONABLE_FAILURE'})
+
+T.test_92_probe_timeout_is_shared_across_attempts=_v311_test_92_probe_timeout_is_shared_across_attempts
+
+
+
+def _v311_test_93_no_actionable_probe_cannot_authorize_implement(self):
+ wt=self.r/'no-actionable-wt'; wt.mkdir(); (wt/'agent').mkdir(); (wt/'tests').mkdir(); (wt/'agent/x.py').write_text('X=1\n'); (wt/'tests/test_x.py').write_text('def test_x(): pass\n')
+ evidence={'status':'NO_ACTIONABLE_FAILURE','reason':'dependency-only','attempts':[{'target':'tests/test_x.py','status':'NON_ACTIONABLE_ENVIRONMENT'}],'context_packet':{}}
+ impl=wt/'impl.json'; impl.write_text(json.dumps({'decision':'IMPLEMENT','summary':'x','problem':'p','fresh_evidence':'fresh','files':['agent/x.py'],'targeted_tests':['tests/test_x.py::test_x'],'risk':'low','expected_benefit':'fix'}))
+ cp=run([sys.executable,str(TRIAGE_PLAN_TOOL),'--plan',str(impl),'--worktree',str(wt),'--evidence-json',json.dumps(evidence)],check=False)
+ self.assertEqual(cp.returncode,2); self.assertIn('fresh failing controller probe',cp.stdout)
