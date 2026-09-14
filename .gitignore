@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Controller runtime state
+reports/
+logs/
+state/
+backups/
+experiments/
+worktrees/
+*.lock
+*.pid
+
+# Local Hermes/user configuration
+.env
+.env.*
+config.yaml
+config.yml
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Credentials/tokens
+credentials*
+secrets*
+tokens*
+
+# Local models / large artifacts
+*.gguf
+*.safetensors
+*.onnx
+*.zip
+
+# Release-only generated files
+MANIFEST.txt
+TEST_RESULTS.md
