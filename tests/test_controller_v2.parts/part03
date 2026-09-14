@@ -1,0 +1,113 @@
+ p=self.r/f'red-{count}.json';d={"baseline_health":"KNOWN_RED","test_failure_summary":{"failure_files":{"tests/test_bad.py":count},"no_run_files":[],"failed_test_count":count}};p.write_text(json.dumps(d));return p
+
+
+def _v32_test_49_candidate_gate_uses_wrapper_and_accepts_nonworse_red(self):
+ w=self.w('redok');self.agent(w,'safe');scripts=w/'scripts';scripts.mkdir(exist_ok=True);marker=self.r/'wrapper-used';rt=scripts/'run_tests.sh';rt.write_text('#!/bin/sh\necho used > '+str(marker)+'\necho "=== 1 files with test failures (2 tests failed) ==="\necho "  tests/test_bad.py  (2 tests failed)"\nexit 1\n');rt.chmod(0o755)
+ e=self.env.copy();cp=run([sys.executable,str(GATE),'--production',str(self.prod),'--worktree',str(w),'--baseline',self.base,'--report',str(self.report),'--policy',str(self.pol()),'--python',str(self.py),'--base',str(self.si),'--baseline-evidence',str(_red_evidence_file(self,2))],env=e)
+ self.assertTrue(marker.exists());self.assertIn('VALIDATED_RESEARCH_ONLY_BASELINE_RED',cp.stdout);self.assertNotIn('PROMOTED',cp.stdout)
+
+
+def _v32_test_50_candidate_gate_rejects_worse_red(self):
+ w=self.w('redworse');self.agent(w,'safe');scripts=w/'scripts';scripts.mkdir(exist_ok=True);rt=scripts/'run_tests.sh';rt.write_text('#!/bin/sh\necho "=== 1 files with test failures (3 tests failed) ==="\necho "  tests/test_bad.py  (3 tests failed)"\nexit 1\n');rt.chmod(0o755)
+ e=self.env.copy();cp=run([sys.executable,str(GATE),'--production',str(self.prod),'--worktree',str(w),'--baseline',self.base,'--report',str(self.report),'--policy',str(self.pol()),'--python',str(self.py),'--base',str(self.si),'--baseline-evidence',str(_red_evidence_file(self,2))],env=e)
+ self.assertIn('REJECT_OR_REVIEW',cp.stdout);self.assertIn('candidate increases failures',self.report.read_text())
+
+T.test_46_baseline_classifies_and_caches_known_red=_v32_test_46_baseline_classifies_and_caches_known_red
+T.test_47_runner_allows_known_red_research_only_when_off=_v32_test_47_runner_allows_known_red_research_only_when_off
+T.test_48_runner_blocks_known_red_when_promotion_enabled=_v32_test_48_runner_blocks_known_red_when_promotion_enabled
+T.test_49_candidate_gate_uses_wrapper_and_accepts_nonworse_red=_v32_test_49_candidate_gate_uses_wrapper_and_accepts_nonworse_red
+T.test_50_candidate_gate_rejects_worse_red=_v32_test_50_candidate_gate_rejects_worse_red
+
+
+def _v33_test_51_agent_guard_blocks_directory_pytest_targets(self):
+ wt=self.r/'guard-dir-wt';wt.mkdir();(wt/'.venv/bin').mkdir(parents=True)
+ pt=wt/'.venv/bin/pytest';pt.write_text('#!/bin/sh\necho TARGETED "$@"\nexit 0\n');pt.chmod(0o755)
+ fakeuv=self.r/'guard-dir-uv';fakeuv.write_text('#!/bin/sh\necho REALUV "$@"\nexit 0\n');fakeuv.chmod(0o755)
+ state=self.r/'guard-dir-state';state.mkdir()
+ cp=run([sys.executable,str(GUARD),'enter','--worktree',str(wt),'--state',str(state),'--token','dir','--uv',str(fakeuv)])
+ manifest=Path(cp.stdout.strip());data=json.loads(manifest.read_text());env=os.environ.copy();env['PATH']=data['bin']+os.pathsep+env.get('PATH','')
+ try:
+  for args in (['pytest','tests/agent'],['pytest','tests/'],['pytest','-k','streaming'],['uv','run','pytest','tests/agent'],['uv','run','pytest','-k','streaming']):
+   got=run(args,env=env,check=False);self.assertEqual(got.returncode,86,(args,got.stdout))
+  for args in (['pytest','tests/test_one.py'],['pytest','tests/test_one.py::test_x'],['uv','run','pytest','tests/test_one.py'],['uv','run','pytest','tests/test_one.py::test_x']):
+   got=run(args,env=env,check=False);self.assertEqual(got.returncode,0,(args,got.stdout))
+ finally:
+  run([sys.executable,str(GUARD),'exit','--manifest',str(manifest)])
+
+def _v33_test_52_context_requires_file_or_node_target(self):
+ t=(ROOT/'self-improvement/hermes-worktree-context.md').read_text()
+ self.assertIn('Directory-wide targets such as `pytest tests/agent`',t)
+ self.assertIn('specific test file or node',t)
+
+T.test_51_agent_guard_blocks_directory_pytest_targets=_v33_test_51_agent_guard_blocks_directory_pytest_targets
+T.test_52_context_requires_file_or_node_target=_v33_test_52_context_requires_file_or_node_target
+
+
+def _v33_test_53_runner_sets_known_red_flag_before_task(self):
+ t=RUNNER.read_text()
+ assign='if [[ "$BASELINE_HEALTH" == KNOWN_RED && "${AUTO_PROMOTE_MODE:-off}" == off ]]; then RED_BASELINE_RESEARCH="yes"; fi'
+ task='DAILY_TASK="# Hermes Self-Improvement Daily Run'
+ self.assertIn(assign,t);self.assertIn(task,t);self.assertLess(t.index(assign),t.index(task))
+ self.assertIn('Known-red research mode: $RED_BASELINE_RESEARCH',t)
+
+
+def _v33_test_54_context_treats_red_failures_as_evidence_not_backlog(self):
+ t=(ROOT/'self-improvement/hermes-worktree-context.md').read_text()+RUNNER.read_text()
+ self.assertIn('failure list is comparison evidence',t)
+ self.assertIn('not as a candidate backlog',t)
+ self.assertIn('Do not recursively list the repository',t)
+
+T.test_53_runner_sets_known_red_flag_before_task=_v33_test_53_runner_sets_known_red_flag_before_task
+T.test_54_context_treats_red_failures_as_evidence_not_backlog=_v33_test_54_context_treats_red_failures_as_evidence_not_backlog
+
+# v3.4 two-model triage -> implementation handoff regressions
+TRIAGE_PLAN_TOOL=ROOT/'scripts/triage_plan.py'
+
+def _v34_test_55_triage_plan_validator_accepts_safe_and_rejects_bad(self):
+ wt=self.r/'plan-wt';wt.mkdir();(wt/'tests').mkdir();(wt/'agent').mkdir()
+ good=wt/'.hermes-si-plan.json';good.write_text(json.dumps({'decision':'IMPLEMENT','summary':'x','problem':'p','fresh_evidence':'fresh','files':['agent/x.py'],'targeted_tests':['tests/test_x.py::test_one'],'risk':'low','expected_benefit':'faster'}))
+ cp=run([sys.executable,str(TRIAGE_PLAN_TOOL),'--plan',str(good),'--worktree',str(wt)]);self.assertIn('"decision":"IMPLEMENT"',cp.stdout)
+ bad=wt/'bad.json';bad.write_text(json.dumps({'decision':'IMPLEMENT','summary':'x','problem':'p','fresh_evidence':'fresh','files':['../escape.py'],'targeted_tests':['tests/'],'risk':'low','expected_benefit':'x'}))
+ cp=run([sys.executable,str(TRIAGE_PLAN_TOOL),'--plan',str(bad),'--worktree',str(wt)],check=False);self.assertEqual(cp.returncode,2);self.assertIn('INVALID_TRIAGE_PLAN',cp.stdout)
+
+def _v34_test_56_runner_uses_qwen_then_gemma_with_split_budget(self):
+ t=RUNNER.read_text();self.assertIn('DISCOVERY_MODEL="${DISCOVERY_MODEL:-qwen3.5:4b-mlx}"',t);self.assertIn('IMPLEMENTATION_MODEL="${IMPLEMENTATION_MODEL:-gemma4:31b-mlx}"',t);self.assertIn('TRIAGE_INFER_TOOL',t);self.assertNotIn('HERMES_INFERENCE_MODEL="$DISCOVERY_MODEL"',t);self.assertIn('HERMES_INFERENCE_MODEL="$IMPLEMENTATION_MODEL"',t);self.assertIn('IMPLEMENTATION_RUNTIME_SECONDS=$(( MAX_RUNTIME_SECONDS - DISCOVERY_RUNTIME_SECONDS ))',t);self.assertIn('IMPLEMENTATION_TURNS="$MAX_TURNS"',t)
+
+def _v34_test_57_triage_source_edit_aborts_before_gemma(self):
+ c,e=self.controller(10);e['FAKE_MODE']='triage_dirty';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,check=False,timeout=30);self.assertEqual(cp.returncode,76);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Direct triage unexpectedly changed the worktree',rep);self.assertIn('SKIPPED_TRIAGE_FAILURE',rep);self.assertFalse((self.prod/'skills/demo/SKILL.md').exists())
+
+def _v34_test_58_triage_no_change_skips_implementation(self):
+ c,e=self.controller(10);e['FAKE_MODE']='none';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=30);self.assertEqual(cp.returncode,0);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Triage selected NO_CHANGE',rep);self.assertNotIn('## Implementation/Review Agent',rep);self.assertIn('NO_CHANGE',rep)
+
+def _v34_test_59_runner_reports_both_stage_models(self):
+ c,e=self.controller(10);e['FAKE_MODE']='safe';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=30);self.assertEqual(cp.returncode,0);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('## Discovery/Triage Classifier',rep);self.assertIn('Model: `qwen3.5:4b-mlx`',rep);self.assertIn('## Implementation/Review Agent',rep);self.assertIn('Model: `gemma4:31b-mlx`',rep);self.assertIn('VALIDATED_AWAITING_ENABLEMENT',rep)
+
+T.test_55_triage_plan_validator_accepts_safe_and_rejects_bad=_v34_test_55_triage_plan_validator_accepts_safe_and_rejects_bad
+T.test_56_runner_uses_qwen_then_gemma_with_split_budget=_v34_test_56_runner_uses_qwen_then_gemma_with_split_budget
+T.test_57_triage_source_edit_aborts_before_gemma=_v34_test_57_triage_source_edit_aborts_before_gemma
+T.test_58_triage_no_change_skips_implementation=_v34_test_58_triage_no_change_skips_implementation
+T.test_59_runner_reports_both_stage_models=_v34_test_59_runner_reports_both_stage_models
+
+# v3.4 two-model triage -> implementation handoff regressions
+TRIAGE_PLAN_TOOL=ROOT/'scripts/triage_plan.py'
+
+def _v34_test_55_triage_plan_validator_accepts_safe_and_rejects_bad(self):
+ wt=self.r/'plan-wt';wt.mkdir();(wt/'tests').mkdir();(wt/'agent').mkdir()
+ good=wt/'.hermes-si-plan.json';good.write_text(json.dumps({'decision':'IMPLEMENT','summary':'x','problem':'p','fresh_evidence':'fresh','files':['agent/x.py'],'targeted_tests':['tests/test_x.py::test_one'],'risk':'low','expected_benefit':'faster'}))
+ cp=run([sys.executable,str(TRIAGE_PLAN_TOOL),'--plan',str(good),'--worktree',str(wt)]);self.assertIn('"decision":"IMPLEMENT"',cp.stdout)
+ bad=wt/'bad.json';bad.write_text(json.dumps({'decision':'IMPLEMENT','summary':'x','problem':'p','fresh_evidence':'fresh','files':['../escape.py'],'targeted_tests':['tests/'],'risk':'low','expected_benefit':'x'}))
+ cp=run([sys.executable,str(TRIAGE_PLAN_TOOL),'--plan',str(bad),'--worktree',str(wt)],check=False);self.assertEqual(cp.returncode,2);self.assertIn('INVALID_TRIAGE_PLAN',cp.stdout)
+
+def _v34_test_56_runner_uses_qwen_then_gemma_with_split_budget(self):
+ t=RUNNER.read_text();self.assertIn('DISCOVERY_MODEL="${DISCOVERY_MODEL:-qwen3.5:4b-mlx}"',t);self.assertIn('IMPLEMENTATION_MODEL="${IMPLEMENTATION_MODEL:-gemma4:31b-mlx}"',t);self.assertIn('TRIAGE_INFER_TOOL',t);self.assertNotIn('HERMES_INFERENCE_MODEL="$DISCOVERY_MODEL"',t);self.assertIn('HERMES_INFERENCE_MODEL="$IMPLEMENTATION_MODEL"',t);self.assertIn('IMPLEMENTATION_RUNTIME_SECONDS=$(( MAX_RUNTIME_SECONDS - DISCOVERY_RUNTIME_SECONDS ))',t);self.assertIn('IMPLEMENTATION_TURNS="$MAX_TURNS"',t)
+
+def _v34_test_57_triage_source_edit_aborts_before_gemma(self):
+ c,e=self.controller(10);e['FAKE_MODE']='triage_dirty';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,check=False,timeout=30);self.assertEqual(cp.returncode,76);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Direct triage unexpectedly changed the worktree',rep);self.assertIn('SKIPPED_TRIAGE_FAILURE',rep);self.assertFalse((self.prod/'skills/demo/SKILL.md').exists())
+
+def _v34_test_58_triage_no_change_skips_implementation(self):
+ c,e=self.controller(10);e['FAKE_MODE']='none';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=30);self.assertEqual(cp.returncode,0);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Triage selected NO_CHANGE',rep);self.assertNotIn('## Implementation/Review Agent',rep);self.assertIn('NO_CHANGE',rep)
+
+def _v34_test_59_runner_reports_both_stage_models(self):
+ c,e=self.controller(10);e['FAKE_MODE']='safe';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=30);self.assertEqual(cp.returncode,0);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('## Discovery/Triage Classifier',rep);self.assertIn('Model: `qwen3.5:4b-mlx`',rep);self.assertIn('## Implementation/Review Agent',rep);self.assertIn('Model: `gemma4:31b-mlx`',rep);self.assertIn('VALIDATED_AWAITING_ENABLEMENT',rep)
+
+T.test_55_triage_plan_validator_accepts_safe_and_rejects_bad=_v34_test_55_triage_plan_validator_accepts_safe_and_rejects_bad
