@@ -1,0 +1,102 @@
+ def test_18_runner_has_gate_and_deadline(self): t=RUNNER.read_text();self.assertIn('CANDIDATE_GATE',t);self.assertIn('DEADLINE_RUNNER',t);self.assertIn('TRIAGE_INFER_TOOL',t);self.assertIn('IMPL_ARGS+=(--max-turns',t)
+ def test_19_agent_cannot_direct_deploy(self): self.assertIn('Never modify or deploy to production directly',RUNNER.read_text())
+ def test_20_default_policy_off(self): self.assertIn('AUTO_PROMOTE_MODE=off',(ROOT/'self-improvement/promotion_policy.env').read_text())
+ def test_21_env_overrides_policy(self):
+  c,e=self.controller(10);e['FAKE_MODE']='sleep';e['MAX_RUNTIME_SECONDS']='1';e['MAX_TURNS']='2';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,check=False,timeout=45);self.assertEqual(cp.returncode,124);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('Max agent runtime: `1s`',rep);self.assertIn('Max agent turns: `2`',rep)
+ def test_22_deadline_forwards_term(self):
+  marker=self.r/'child.pid';code=f'import os,time,pathlib;pathlib.Path({str(marker)!r}).write_text(str(os.getpid()));time.sleep(30)'
+  p=subprocess.Popen([sys.executable,str(DEADLINE),'20','--',sys.executable,'-c',code],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+  import time as _time
+  for _ in range(50):
+   if marker.exists(): break
+   _time.sleep(.05)
+  self.assertTrue(marker.exists());child=int(marker.read_text());p.terminate();self.assertEqual(p.wait(timeout=5),143);p.stdout.close() if p.stdout else None;_time.sleep(.1)
+  with self.assertRaises(ProcessLookupError): os.kill(child,0)
+ def test_23_deadline_forwards_int(self):
+  marker=self.r/'child-int.pid';code=f'import os,time,pathlib;pathlib.Path({str(marker)!r}).write_text(str(os.getpid()));time.sleep(30)'
+  p=subprocess.Popen([sys.executable,str(DEADLINE),'20','--',sys.executable,'-c',code],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+  import time as _time
+  for _ in range(50):
+   if marker.exists(): break
+   _time.sleep(.05)
+  self.assertTrue(marker.exists());child=int(marker.read_text());os.kill(p.pid, signal.SIGINT);self.assertEqual(p.wait(timeout=5),130);p.stdout.close() if p.stdout else None;_time.sleep(.1)
+  with self.assertRaises(ProcessLookupError): os.kill(child,0)
+
+ def test_24_master_prompt_not_injected_wholesale(self):
+  t=RUNNER.read_text();self.assertNotIn('DAILY_TASK="$(cat "$PROMPT")',t);self.assertIn('Canonical master policy: $PROMPT',t);self.assertIn('Master policy injected wholesale',t)
+ def test_25_context_enforces_anti_recursion_and_budget(self):
+  t=(ROOT/'self-improvement/hermes-worktree-context.md').read_text();self.assertIn("Do not read the current self-improvement run's own report or log",t);self.assertIn('at most one previous self-improvement report',t);self.assertIn('Run-budget discipline',t)
+
+ def test_26_baseline_validation_outside_agent(self):
+  t=RUNNER.read_text();self.assertIn('BASELINE_VALIDATOR',t);self.assertIn('TRIAGE_INFER_TOOL',t);self.assertIn('IMPL_ARGS=(chat',t);self.assertLess(t.index('BASELINE_JSON='),t.index('TRIAGE_PLAN="$WORKTREE/.hermes-si-plan.json"'));self.assertLess(t.index('TRIAGE_PLAN="$WORKTREE/.hermes-si-plan.json"'),t.index('IMPL_ARGS=(chat'))
+ def test_27_no_precandidate_full_tests(self):
+  t=(ROOT/'self-improvement/hermes-worktree-context.md').read_text()+RUNNER.read_text();self.assertIn('Do NOT run scripts/run_tests.sh',t);self.assertIn('independent candidate gate owns the broad non-integration regression suite',t)
+ def test_28_baseline_cache(self):
+  wt=self.r/'baseline-wt';shutil.copytree(self.prod,wt,ignore=shutil.ignore_patterns('.git'));state=self.r/'baseline-state';state.mkdir();calls=self.r/'calls';fake=self.r/'fake-python';fake.write_text('#!/bin/sh\necho "$@" >> '+str(calls)+'\nexit 0\n');fake.chmod(0o755);args=[sys.executable,str(BASELINE_VALIDATE),'--production',str(self.prod),'--worktree',str(wt),'--baseline',self.base,'--python',str(fake),'--state',str(state),'--timeout','10','--cache-seconds','3600'];a=json.loads(run(args,env=self.env).stdout);b=json.loads(run(args,env=self.env).stdout);self.assertEqual(a['cache'],'miss');self.assertEqual(b['cache'],'hit');self.assertEqual(len(calls.read_text().splitlines()),3)
+ def test_29_candidate_gate_prefers_worktree_dev_python(self):
+  t=GATE.read_text();self.assertIn("worktree/'.venv/bin/python'",t);self.assertIn('Candidate test Python',t)
+
+ def test_30_baseline_sync_without_lock(self):
+  wt=self.r/'nolock-wt';shutil.copytree(self.prod,wt,ignore=shutil.ignore_patterns('.git'));(wt/'pyproject.toml').write_text('[project]\nname="x"\nversion="0.0.0"\n')
+  scripts=wt/'scripts';scripts.mkdir(exist_ok=True);marker=self.r/'baseline-ran';rt=scripts/'run_tests.sh';rt.write_text('#!/bin/sh\necho yes > '+str(marker)+'\nexit 0\n');rt.chmod(0o755)
+  bindir=self.r/'bin';bindir.mkdir();uvlog=self.r/'uvargs';uv=bindir/'uv';uv.write_text('#!/bin/sh\necho "$@" > '+str(uvlog)+'\nmkdir -p .venv/bin\ntouch uv.lock\nexit 0\n');uv.chmod(0o755)
+  state=self.r/'nolock-state';state.mkdir();env=self.env.copy();env['PATH']=str(bindir)+os.pathsep+env.get('PATH','')
+  cp=run([sys.executable,str(BASELINE_VALIDATE),'--production',str(self.prod),'--worktree',str(wt),'--baseline',self.base,'--python',str(self.py),'--state',str(state),'--timeout','10','--cache-seconds','3600'],env=env);d=json.loads(cp.stdout)
+  self.assertEqual(d['dev_sync']['exit'],0);self.assertEqual(d['dev_sync']['mode'],'unlocked');self.assertIn('sync --extra dev',uvlog.read_text());self.assertEqual(d['test_command'],'scripts/run_tests.sh');self.assertTrue(marker.exists());self.assertFalse((wt/'uv.lock').exists());self.assertTrue(d['dev_sync'].get('removed_generated_lock'));self.assertEqual(d['baseline_health'],'PASS')
+ def test_31_agent_phase_guard_restores(self):
+  wt=self.r/'guard-wt';(wt/'scripts').mkdir(parents=True);rt=wt/'scripts/run_tests.sh';original='#!/bin/sh\necho original\nexit 0\n';rt.write_text(original);rt.chmod(0o755);state=self.r/'guard-state';state.mkdir()
+  ent=run([sys.executable,str(GUARD),'enter','--worktree',str(wt),'--state',str(state),'--token','x']);manifest=Path(ent.stdout.strip());blocked=run(['/bin/sh',str(rt)],check=False);self.assertEqual(blocked.returncode,86);self.assertIn('BLOCKED_BY_SELF_IMPROVEMENT_CONTROLLER',blocked.stdout)
+  run([sys.executable,str(GUARD),'exit','--manifest',str(manifest)]);self.assertEqual(rt.read_text(),original);self.assertEqual(run(['/bin/sh',str(rt)]).stdout.strip(),'original');self.assertFalse(manifest.exists())
+ def test_32_failed_baseline_not_cached(self):
+  wt=self.r/'failcache-wt';shutil.copytree(self.prod,wt,ignore=shutil.ignore_patterns('.git'));state=self.r/'failcache-state';state.mkdir();calls=self.r/'failcalls';fake=self.r/'fail-python';fake.write_text('#!/bin/sh\necho "$@" >> '+str(calls)+'\nif [ "$1" = "-m" ] && [ "$2" = "pytest" ]; then exit 1; fi\nexit 0\n');fake.chmod(0o755)
+  args=[sys.executable,str(BASELINE_VALIDATE),'--production',str(self.prod),'--worktree',str(wt),'--baseline',self.base,'--python',str(fake),'--state',str(state),'--timeout','10','--cache-seconds','3600'];a=json.loads(run(args,env=self.env).stdout);b=json.loads(run(args,env=self.env).stdout);self.assertEqual(a['baseline_health'],'ATTENTION');self.assertEqual(a['cache'],'miss');self.assertEqual(b['cache'],'miss');self.assertGreaterEqual(len(calls.read_text().splitlines()),6)
+
+
+# v2.7 portability/agent-discipline regressions
+
+def _v27_test_33_uv_common_path_discovery(self):
+ wt=self.r/'homeuv-wt';shutil.copytree(self.prod,wt,ignore=shutil.ignore_patterns('.git'));(wt/'pyproject.toml').write_text('[project]\nname="x"\nversion="0.0.0"\n')
+ scripts=wt/'scripts';scripts.mkdir(exist_ok=True);marker=self.r/'homeuv-ran';rt=scripts/'run_tests.sh';rt.write_text('#!/bin/sh\necho yes > '+str(marker)+'\nexit 0\n');rt.chmod(0o755)
+ home=self.r/'home';uvdir=home/'.local/bin';uvdir.mkdir(parents=True);uv=uvdir/'uv';uv.write_text('#!/bin/sh\nmkdir -p .venv/bin\nexit 0\n');uv.chmod(0o755)
+ state=self.r/'homeuv-state';state.mkdir();env=self.env.copy();env['HOME']=str(home);env['PATH']='/usr/bin:/bin'
+ d=json.loads(run([sys.executable,str(BASELINE_VALIDATE),'--production',str(self.prod),'--worktree',str(wt),'--baseline',self.base,'--python',str(self.py),'--state',str(state),'--timeout','10','--cache-seconds','3600'],env=env).stdout)
+ self.assertEqual(d['dev_sync']['exit'],0);self.assertEqual(Path(d['dev_sync']['executable']),uv.resolve());self.assertTrue(marker.exists());self.assertEqual(d['baseline_health'],'PASS')
+
+def _v27_test_34_agent_guard_blocks_broad_pytest_and_uv_sync(self):
+ wt=self.r/'guard2-wt';(wt/'scripts').mkdir(parents=True);rt=wt/'scripts/run_tests.sh';rt.write_text('#!/bin/sh\nexit 0\n');rt.chmod(0o755)
+ (wt/'.venv/bin').mkdir(parents=True);pt=wt/'.venv/bin/pytest';pt.write_text('#!/bin/sh\necho TARGETED "$@"\nexit 0\n');pt.chmod(0o755)
+ realuv=self.r/'realuv';realuv.write_text('#!/bin/sh\necho REALUV "$@"\nexit 0\n');realuv.chmod(0o755)
+ state=self.r/'guard2-state';state.mkdir();ent=run([sys.executable,str(GUARD),'enter','--worktree',str(wt),'--state',str(state),'--token','g2','--uv',str(realuv)]);manifest=Path(ent.stdout.strip());data=json.loads(manifest.read_text());env=os.environ.copy();env['PATH']=data['bin']+os.pathsep+env.get('PATH','')
+ a=run(['pytest'],env=env,check=False);self.assertEqual(a.returncode,86);self.assertIn('BLOCKED_BY_SELF_IMPROVEMENT_CONTROLLER',a.stdout)
+ b=run(['pytest','tests/test_one.py'],env=env,check=False);self.assertEqual(b.returncode,0);self.assertIn('TARGETED',b.stdout)
+ c=run(['uv','sync'],env=env,check=False);self.assertEqual(c.returncode,86)
+ e=run(['uv','run','pytest'],env=env,check=False);self.assertEqual(e.returncode,86)
+ f=run(['uv','run','pytest','tests/test_one.py'],env=env,check=False);self.assertEqual(f.returncode,0);self.assertIn('REALUV',f.stdout)
+ d=run(['uv','--version'],env=env,check=False);self.assertEqual(d.returncode,0);self.assertIn('REALUV',d.stdout)
+ run([sys.executable,str(GUARD),'exit','--manifest',str(manifest)])
+
+def _v27_test_35_context_rejects_history_and_todo_hunting(self):
+ t=(ROOT/'self-improvement/hermes-worktree-context.md').read_text()+RUNNER.read_text();self.assertIn('Do not open previous self-improvement reports/logs during discovery',t);self.assertIn('Do not use generic TODO/FIXME scans as a candidate source',t)
+
+def _v27_test_36_runner_uses_path_guard(self):
+ t=RUNNER.read_text();self.assertIn('AGENT_GUARD_BIN',t);self.assertIn('PATH="$AGENT_GUARD_BIN:$PATH"',t);self.assertIn('UV_FOR_AGENT',t);self.assertIn('BASELINE_ARGS+=(--skip-tests)',t)
+
+T.test_33_uv_common_path_discovery=_v27_test_33_uv_common_path_discovery
+T.test_34_agent_guard_blocks_broad_pytest_and_uv_sync=_v27_test_34_agent_guard_blocks_broad_pytest_and_uv_sync
+T.test_35_context_rejects_history_and_todo_hunting=_v27_test_35_context_rejects_history_and_todo_hunting
+T.test_36_runner_uses_path_guard=_v27_test_36_runner_uses_path_guard
+
+def _v27_test_37_runner_skips_agent_if_environment_unready(self):
+ c,e=self.controller(10)
+ bv=c/'scripts/baseline_validate.py'
+ bv.write_text('import json\nprint(json.dumps({"cache":"miss","baseline_health":"ATTENTION","environment_ready":False,"tests":{"exit":1,"seconds":0.01},"dev_sync":{"exit":None,"seconds":0,"mode":"skipped","source":"missing","executable":None},"test_command":"scripts/run_tests.sh"}))\n')
+ e['FAKE_MODE']='safe'
+ cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,check=False,timeout=30)
+ self.assertEqual(cp.returncode,78)
+ rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text()
+ self.assertIn('SKIPPED_BASELINE_ENVIRONMENT',rep);self.assertIn('Production modified: `no`',rep);self.assertNotIn('\ndone\n',rep)
+
+T.test_37_runner_skips_agent_if_environment_unready=_v27_test_37_runner_skips_agent_if_environment_unready
+
+
+def _v28_test_38_uv_sibling_of_hermes_python(self):
