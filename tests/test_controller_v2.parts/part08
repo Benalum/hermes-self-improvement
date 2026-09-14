@@ -1,0 +1,181 @@
+# v3.15 one-hop production-callee evidence regression
+
+def _v315_test_99_primary_function_expands_direct_production_helpers(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
+  (wt/'tests/test_guest_durability_barriers.py').write_text('''def _config(monkeypatch, value):\n    return value\n\ndef test_guest_barriers_leave_synchronous_alone_when_unset(monkeypatch, conn):\n    _config(monkeypatch, {})\n    apply_durability_barriers(conn)\n    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1\n''')
+  (wt/'hermes_state.py').write_text('''def _reapply_durability_barriers(conn):\n    conn.execute("PRAGMA synchronous=2")\n    return True\n\ndef _apply_synchronous_pragma(conn, value, db_label="state.db"):\n    conn.execute("PRAGMA synchronous=%s" % value)\n\ndef apply_durability_barriers(conn):\n    ok = _reapply_durability_barriers(conn)\n    raw_synchronous = None\n    if raw_synchronous is not None:\n        _apply_synchronous_pragma(conn, raw_synchronous, db_label="state.db (guest)")\n    return ok\n\ndef unrelated_setup():\n    return None\n'''); run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/test_guest_durability_barriers.py::test_guest_barriers_leave_synchronous_alone_when_unset"\necho "tests/test_guest_durability_barriers.py:7: in test_guest_barriers_leave_synchronous_alone_when_unset"\necho "E   assert 2 == 1"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'one-hop-callees','failure_files':{'tests/test_guest_durability_barriers.py':1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','1']).stdout)
+  defs=d['context_packet']['source_definitions']; symbols=[x['symbol'] for x in defs]
+  self.assertEqual(symbols[0], 'apply_durability_barriers')
+  self.assertEqual(set(symbols[1:]), {'_reapply_durability_barriers','_apply_synchronous_pragma'})
+  self.assertEqual(len(symbols), 3)
+  self.assertIn('PRAGMA synchronous=2', next(x['excerpt'] for x in defs if x['symbol']=='_reapply_durability_barriers'))
+  self.assertNotIn('_config', symbols)
+
+T.test_99_primary_function_expands_direct_production_helpers=_v315_test_99_primary_function_expands_direct_production_helpers
+
+# v3.16 captured-warning dependency regression
+
+def _v316_test_100_probe_skips_explicit_dependency_warning_and_selects_next_failure(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/agent').mkdir(parents=True)
+  a='tests/agent/test_auxiliary_transport_autodetect.py'; b='tests/agent/test_next.py'
+  (wt/a).write_text('def test_a(): pass\n'); (wt/b).write_text('def test_b(): pass\n')
+  fake=td/'fake-python'
+  script = '''#!/bin/sh
+case "$*" in
+  *test_auxiliary_transport_autodetect.py*)
+    echo "FAILED tests/agent/test_auxiliary_transport_autodetect.py::test_resolve_provider_client_kimi_coding_wraps_anthropic"
+    echo "WARNING agent.auxiliary_client: Failed to build Anthropic client for https://api.kimi.com/coding (The 'anthropic' package is required for the Anthropic provider. Install it with: pip install 'anthropic>=0.39.0') — falling back to OpenAI-wire client."
+    exit 1;;
+  *test_next.py*)
+    echo "FAILED tests/agent/test_next.py::test_b - AssertionError: actionable"
+    echo "tests/agent/test_next.py:1: in test_b"
+    exit 1;;
+esac
+exit 125
+'''
+  fake.write_text(script); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'warning-dep','failure_files':{a:1,b:1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','3']).stdout)
+  self.assertEqual(d['status'],'FAIL'); self.assertEqual(d['target'],b); self.assertEqual(d['attempt_count'],2)
+  self.assertEqual(d['attempts'][0]['status'],'NON_ACTIONABLE_ENVIRONMENT')
+  self.assertIn('anthropic',d['attempts'][0]['reason'])
+  self.assertEqual(d['attempts'][1]['target'],b)
+
+  # A generic warning without an explicit install instruction must NOT be skipped.
+  state2=td/'state2'
+  fake2=td/'fake-python-generic'; fake2.write_text('''#!/bin/sh
+echo "FAILED tests/agent/test_auxiliary_transport_autodetect.py::test_a"
+echo "WARNING provider: the optional package is required for this feature"
+exit 1
+'''); os.chmod(fake2,0o755)
+  baseline2={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'generic-warning','failure_files':{a:1}}}
+  d2=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline2),'--worktree',str(wt),'--state',str(state2),'--python',str(fake2),'--timeout','5','--max-attempts','1']).stdout)
+  self.assertEqual(d2['status'],'FAIL')
+  self.assertEqual(d2['attempts'][0]['status'],'FAIL')
+
+T.test_100_probe_skips_explicit_dependency_warning_and_selects_next_failure=_v316_test_100_probe_skips_explicit_dependency_warning_and_selects_next_failure
+
+# v3.17 executable evidence + bounded local test-helper context regressions
+
+def _v317_test_101_focused_terms_prefer_executable_assignments_over_prose(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/run_agent').mkdir(parents=True); (wt/'agent').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
+  (wt/'tests/run_agent/test_focus_exec.py').write_text('''def test_primary_runtime_includes_reasoning_config():
+    agent = object()
+    switch_model(agent)
+    assert hasattr(agent, "_primary_runtime")
+    assert "reasoning_config" in agent._primary_runtime
+''')
+  body=[
+   'def switch_model(agent):',
+   '    """The _primary_runtime snapshot later stores reasoning_config."""',
+   '    # _primary_runtime is updated after setup; reasoning_config is included.',
+  ]
+  for i in range(90):
+   body.append('    filler_%03d = %d' % (i, i))
+  body += [
+   '    agent.reasoning_config = {"enabled": True, "effort": "xhigh"}',
+   '    more_work = True',
+   '    agent._primary_runtime = {',
+   '        "model": "claude-opus-4.5",',
+   '        "reasoning_config": dict(agent.reasoning_config),',
+   '    }',
+   '    return more_work',
+  ]
+  (wt/'agent/runtime.py').write_text('\n'.join(body)+'\n'); run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/run_agent/test_focus_exec.py::test_primary_runtime_includes_reasoning_config"\necho "tests/run_agent/test_focus_exec.py:5: in test_primary_runtime_includes_reasoning_config"\necho "E   AssertionError"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'exec-focus','failure_files':{'tests/run_agent/test_focus_exec.py':1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','1']).stdout)
+  excerpt=d['context_packet']['source_definitions'][0]['excerpt']
+  self.assertIn('agent._primary_runtime = {', excerpt)
+  self.assertIn('"reasoning_config": dict(agent.reasoning_config)', excerpt)
+  self.assertIn('agent.reasoning_config = {"enabled": True', excerpt)
+  self.assertLessEqual(len(excerpt),7100)
+
+
+def _v317_test_102_context_includes_bounded_local_test_helper(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/run_agent').mkdir(parents=True); (wt/'agent').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
+  test='''from unittest.mock import MagicMock
+
+class TestSwitch:
+    def _make_fake_agent(self):
+        agent = MagicMock()
+        agent.model = "old"
+        return agent
+
+    def test_primary_runtime_includes_reasoning_config(self):
+        agent = self._make_fake_agent()
+        switch_model(agent)
+        assert hasattr(agent, "_primary_runtime")
+        assert "reasoning_config" in agent._primary_runtime
+'''
+  (wt/'tests/run_agent/test_local_helper.py').write_text(test)
+  (wt/'agent/runtime.py').write_text('''def switch_model(agent):
+    agent.reasoning_config = {"effort": "xhigh"}
+    agent._primary_runtime = {"reasoning_config": dict(agent.reasoning_config)}
+'''); run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/run_agent/test_local_helper.py::TestSwitch::test_primary_runtime_includes_reasoning_config"\necho "tests/run_agent/test_local_helper.py:13: in test_primary_runtime_includes_reasoning_config"\necho "E   AssertionError: assert reason in MagicMock"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'local-test-helper','failure_files':{'tests/run_agent/test_local_helper.py':1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','1']).stdout)
+  c=d['context_packet']; helpers=c.get('test_helpers') or []
+  self.assertLessEqual(len(helpers),2)
+  self.assertTrue(any(x['symbol']=='_make_fake_agent' for x in helpers))
+  helper=next(x for x in helpers if x['symbol']=='_make_fake_agent')
+  self.assertIn('MagicMock()', helper['excerpt'])
+  self.assertEqual(helper['path'], 'tests/run_agent/test_local_helper.py')
+  self.assertTrue(all(not x['path'].startswith('tests/') for x in c['source_definitions']))
+
+T.test_101_focused_terms_prefer_executable_assignments_over_prose=_v317_test_101_focused_terms_prefer_executable_assignments_over_prose
+T.test_102_context_includes_bounded_local_test_helper=_v317_test_102_context_includes_bounded_local_test_helper
+
+# v3.18 patched-helper causal ranking + primary focus regression
+
+def _v318_test_103_patched_direct_helper_outranks_unrelated_guards(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/tools').mkdir(parents=True); (wt/'tools').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
+  (wt/'tests/tools/test_file_tools.py').write_text('''from unittest.mock import MagicMock, patch
+
+class TestWriteFileHandler:
+    @patch("tools.file_tools._get_file_ops")
+    def test_writes_content(self, mock_get):
+        mock_ops = MagicMock()
+        mock_get.return_value = mock_ops
+        result = write_file_tool("/tmp/out.txt", "hello world!\\n")
+        assert result["status"] == "ok"
+        mock_ops.write_file.assert_called_once_with("/tmp/out.txt", "hello world!\\n")
+''')
+  (wt/'tools/file_tools.py').write_text('''def _check_sensitive_path(path):
+    return None
+
+def _check_binary_document_write(path):
+    return None
+
+def _resolve_path_for_task(path):
+    return path.replace("/tmp/", "/private/tmp/")
+
+def _get_file_ops():
+    return object()
+
+def write_file_tool(path, content):
+    if _check_sensitive_path(path):
+        return {"status": "error"}
+    if _check_binary_document_write(path):
+        return {"status": "error"}
+    resolved = _resolve_path_for_task(path)
+    ops = _get_file_ops()
+    ops.write_file(resolved, content)
+    return {"status": "ok"}
+'''); run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/tools/test_file_tools.py::TestWriteFileHandler::test_writes_content"\necho "tests/tools/test_file_tools.py:10: in test_writes_content"\necho "E Expected: write_file(\x27/tmp/out.txt\x27, ...)"\necho "E Actual: write_file(\x27/private/tmp/out.txt\x27, ...)"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'patched-causal-rank','failure_files':{'tests/tools/test_file_tools.py':1}}}
