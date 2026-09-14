@@ -60,17 +60,19 @@ The direct discovery stage calls local Ollama structured inference and does not 
 Run the controller acceptance suite with:
 
 ```bash
-./scripts/run_synthetic_tests.sh
+bash ./scripts/run_synthetic_tests.sh
 ```
 
 The v3.19 release contains **104 controller regression tests** covering promotion policy, rollback, watchdogs, baseline handling, known-red behavior, structured triage, bounded probe rotation, evidence extraction, context ranking, and implementation gating.
+
+The large v3.19 regression module is stored as ten line-boundary transport fragments because the connector used to seed this public repository could not upload the original local file directly. `tests/test_controller_v2.py` verifies the exact original byte length and SHA-256 before executing the concatenated source, so a missing or altered fragment fails closed.
 
 ## macOS installation
 
 The installer targets an existing Hermes Agent installation and intentionally does **not** replace the canonical master prompt.
 
 ```bash
-./scripts/install_self_improvement_macos.sh
+bash ./scripts/install_self_improvement_macos.sh
 /opt/hermes-self-improvement/scripts/preflight_macos.sh
 ```
 
@@ -81,7 +83,7 @@ Do not enable automatic promotion until the controller has been validated on the
 ```text
 scripts/                 controller tools, gates, installer, and preflight
 self-improvement/        runtime controller, policy defaults, architecture/history
- tests/                   synthetic/regression test suite
+tests/                   synthetic/regression test suite
 .github/workflows/       public CI
 ```
 
