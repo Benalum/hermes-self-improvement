@@ -1,0 +1,48 @@
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','1']).stdout)
+  c=d['context_packet']; defs=c['source_definitions']; symbols=[x['symbol'] for x in defs]
+  self.assertEqual(symbols[0], 'write_file_tool')
+  self.assertEqual(symbols[1], '_get_file_ops')
+  self.assertLessEqual(len(symbols), 3)
+  self.assertIn('_get_file_ops', c['evidence_terms'])
+  primary=defs[0]['excerpt']
+  self.assertIn('ops = _get_file_ops()', primary)
+  self.assertIn('resolved = _resolve_path_for_task(path)', primary)
+
+T.test_103_patched_direct_helper_outranks_unrelated_guards=_v318_test_103_patched_direct_helper_outranks_unrelated_guards
+
+# v3.19 causal control-flow focus regression
+
+def _v319_test_104_control_flow_guard_outranks_context_output_assignments(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
+  (wt/'tests/test_hermes_state.py').write_text('def test_projection_context_query_count():\n    result = search_messages(fields=("session_id", "context"))\n    assert "context" in result\n')
+  body=[
+   'def search_messages(fields=None):',
+   '    """Projection context is loaded only when requested."""',
+   '    result_fields = tuple(fields) if fields is not None else None',
+   '    match = {}',
+   '    match["context"] = []',
+  ]
+  for i in range(70):
+   body.append('    filler_%03d = %d' % (i, i))
+  body += [
+   '    match["context"] = ["placeholder"]',
+   '    if result_fields is None or "context" in result_fields:',
+   '        rows = execute_context_query()',
+   '        match["context"] = rows',
+   '    return match',
+   '',
+   'def execute_context_query():',
+   '    return ["ctx"]',
+  ]
+  (wt/'projection.py').write_text('\n'.join(body)+'\n'); run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/test_hermes_state.py::test_projection_context_query_count"\necho "tests/test_hermes_state.py:3: in test_projection_context_query_count"\necho "E   AssertionError"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'control-flow-focus','failure_files':{'tests/test_hermes_state.py':1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','1']).stdout)
+  c=d['context_packet']; excerpt=c['source_definitions'][0]['excerpt']
+  self.assertIn('if result_fields is None or "context" in result_fields:', excerpt)
+  self.assertIn('match["context"]', excerpt)
+  self.assertLessEqual(len(excerpt),7100)
+
+T.test_104_control_flow_guard_outranks_context_output_assignments=_v319_test_104_control_flow_guard_outranks_context_output_assignments
