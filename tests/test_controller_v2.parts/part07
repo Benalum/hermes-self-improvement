@@ -1,0 +1,126 @@
+ no=wt/'no.json'; no.write_text(json.dumps({'decision':'NO_CHANGE','summary':'skip','problem':'dependency only','fresh_evidence':'bounded probes exhausted','files':[],'targeted_tests':[],'risk':'low','expected_benefit':'avoid unsafe change'}))
+ cp=run([sys.executable,str(TRIAGE_PLAN_TOOL),'--plan',str(no),'--worktree',str(wt),'--evidence-json',json.dumps(evidence)]); self.assertIn('NO_CHANGE',cp.stdout)
+
+T.test_93_no_actionable_probe_cannot_authorize_implement=_v311_test_93_no_actionable_probe_cannot_authorize_implement
+
+# v3.12 focused assertion evidence / selected-only classifier handoff regressions
+
+def _v312_test_94_probe_focuses_on_assertion_terms_deep_in_production_definition(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/run_agent').mkdir(parents=True); (wt/'agent').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
+  test='def test_primary_runtime_includes_reasoning_config():\n    agent = object()\n    switch_model(agent)\n    assert hasattr(agent, "_primary_runtime")\n    assert "reasoning_config" in agent._primary_runtime\n'
+  (wt/'tests/run_agent/test_focus.py').write_text(test)
+  body=['def switch_model(agent):','    start = 1']
+  for i in range(180):
+   if i==90:
+    body.append('    agent._primary_runtime = {"reasoning_config": "medium"}')
+   else:
+    body.append('    filler_%03d = "%s"' % (i, 'x'*48))
+  body.append('    return agent')
+  (wt/'agent/runtime.py').write_text('\n'.join(body)+'\n')
+  run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/run_agent/test_focus.py::test_primary_runtime_includes_reasoning_config"\necho "tests/run_agent/test_focus.py:5: in test_primary_runtime_includes_reasoning_config"\necho "E   AssertionError"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'focus-deep','failure_files':{'tests/run_agent/test_focus.py':1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','1']).stdout)
+  c=d['context_packet']; self.assertIn('_primary_runtime',c['evidence_terms']); self.assertIn('reasoning_config',c['evidence_terms']); self.assertIn('switch_model',c['candidate_symbols'])
+  self.assertTrue(c['source_definitions']); excerpt=c['source_definitions'][0]['excerpt']; self.assertIn('_primary_runtime',excerpt); self.assertIn('reasoning_config',excerpt); self.assertIn('controller focused source evidence',excerpt); self.assertLessEqual(len(excerpt),7100)
+
+
+def _v312_test_95_runner_classifier_sees_only_selected_probe_candidate(self):
+ c,e=self.controller(10); _v310_ground_knownred(self,c)
+ probe={'status':'FAIL','target':'tests/test_ok.py','exit':1,'seconds':0.1,'baseline_failure_count':1,'output':'FAILED tests/test_ok.py::test_ok - selected-current-failure','attempt_count':3,'max_attempts':3,'attempts':[{'target':'tests/run_agent/test_run_agent.py','status':'NON_ACTIONABLE_ENVIRONMENT','reason':'missing optional package: anthropic'},{'target':'tests/run_agent/test_streaming.py','status':'NON_ACTIONABLE_ENVIRONMENT','reason':'missing optional package: anthropic'},{'target':'tests/test_ok.py','status':'FAIL','reason':'selected for classifier review'}],'context_packet':{'failure_node':'tests/test_ok.py::test_ok','failure_line':1,'candidate_symbols':['demo'],'evidence_terms':['current_key'],'test_excerpt':'def test_ok(): assert True','source_definitions':[{'path':'skills/demo/SKILL.md','symbol':'demo','line':1,'evidence_terms':['current_key'],'excerpt':'# selected current source'}]}}
+ (c/'scripts/fresh_probe.py').write_text('import json\nprint('+repr(json.dumps(probe))+')\n')
+ capture=self.r/'captured-triage-prompt.txt'; triage=self.r/'capture-triage.py'
+ triage.write_text('import argparse,json,os,pathlib\np=argparse.ArgumentParser();p.add_argument("--model");p.add_argument("--prompt-file",required=True);p.add_argument("--endpoint");p.add_argument("--timeout");a=p.parse_args();text=pathlib.Path(a.prompt_file).read_text();pathlib.Path(os.environ["CAPTURE_PROMPT"]).write_text(text);print(json.dumps({"decision":"NO_CHANGE","summary":"skip","problem":"insufficient","fresh_evidence":"selected-current-failure","files":[],"targeted_tests":[],"risk":"low","expected_benefit":"avoid speculation"}))\n'); triage.chmod(0o755)
+ e['TRIAGE_INFER_TOOL']=str(triage); e['CAPTURE_PROMPT']=str(capture); e['FAKE_MODE']='none'
+ cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=60); self.assertEqual(cp.returncode,0)
+ prompt=capture.read_text(); self.assertIn('selected-current-failure',prompt); self.assertIn('current_key',prompt); self.assertNotIn('NON_ACTIONABLE_ENVIRONMENT',prompt); self.assertNotIn('missing optional package: anthropic',prompt)
+ rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text(); self.assertIn('NON_ACTIONABLE_ENVIRONMENT',rep); self.assertIn('missing optional package: anthropic',rep)
+
+T.test_94_probe_focuses_on_assertion_terms_deep_in_production_definition=_v312_test_94_probe_focuses_on_assertion_terms_deep_in_production_definition
+T.test_95_runner_classifier_sees_only_selected_probe_candidate=_v312_test_95_runner_classifier_sees_only_selected_probe_candidate
+
+# v3.13 multiline-definition fallback + patched-helper context regressions
+
+def _v313_test_96_multiline_definition_fallback_includes_function_body(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/tools').mkdir(parents=True); (wt/'tools').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
+  test='''from unittest.mock import patch\n\n@patch("tools.file_tools._get_file_ops")\ndef test_writes_content(mock_get):\n    write_file_tool("/tmp/out.txt", "hello")\n    mock_get.return_value.write_file.assert_called_once_with("/tmp/out.txt", "hello")\n'''
+  (wt/'tests/tools/test_file_tools.py').write_text(test)
+  # ``type Alias = ...`` intentionally makes whole-file ast.parse fail on Python 3.11,
+  # forcing the lexical fallback used against newer checked-out Hermes syntax.
+  prod='''type Alias = int\n\ndef _get_file_ops(\n    task_id: str = "default",\n):\n    return OPS\n\ndef write_file_tool(\n    path: str,\n    content: str,\n    task_id: str = "default",\n):\n    normalized = os.path.realpath(path)\n    ops = _get_file_ops(task_id)\n    return ops.write_file(normalized, content)\n\ndef after():\n    return 1\n'''
+  (wt/'tools/file_tools.py').write_text(prod); run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/tools/test_file_tools.py::test_writes_content"\necho "tests/tools/test_file_tools.py:6: in test_writes_content"\necho "E   AssertionError: Expected /tmp/out.txt Actual /private/tmp/out.txt"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'multiline-body','failure_files':{'tests/tools/test_file_tools.py':1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','1']).stdout)
+  defs={x['symbol']:x for x in d['context_packet']['source_definitions']}
+  self.assertIn('write_file_tool',defs); excerpt=defs['write_file_tool']['excerpt']
+  self.assertIn('normalized = os.path.realpath(path)',excerpt); self.assertIn('ops.write_file(normalized, content)',excerpt); self.assertNotIn('def after',excerpt)
+
+
+def _v313_test_97_patch_target_helper_is_included_as_production_evidence(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests/tools').mkdir(parents=True); (wt/'tools').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
+  (wt/'tests/tools/test_file_tools.py').write_text('''from unittest.mock import patch\n@patch("tools.file_tools._get_file_ops")\ndef test_writes_content(mock_get):\n    write_file_tool("/tmp/out.txt", "hello")\n    mock_get.return_value.write_file.assert_called_once_with("/tmp/out.txt", "hello")\n''')
+  (wt/'tools/file_tools.py').write_text('''def _get_file_ops(task_id="default"):\n    return OPS\n\ndef write_file_tool(path, content, task_id="default"):\n    ops = _get_file_ops(task_id)\n    return ops.write_file(path, content)\n'''); run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/tools/test_file_tools.py::test_writes_content"\necho "tests/tools/test_file_tools.py:5: in test_writes_content"\necho "E   AssertionError"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'patch-helper','failure_files':{'tests/tools/test_file_tools.py':1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','1']).stdout)
+  c=d['context_packet']; self.assertIn('_get_file_ops',c['candidate_symbols']); symbols=[x['symbol'] for x in c['source_definitions']]
+  self.assertIn('write_file_tool',symbols); self.assertIn('_get_file_ops',symbols); self.assertLessEqual(len(symbols),3)
+
+T.test_96_multiline_definition_fallback_includes_function_body=_v313_test_96_multiline_definition_fallback_includes_function_body
+T.test_97_patch_target_helper_is_included_as_production_evidence=_v313_test_97_patch_target_helper_is_included_as_production_evidence
+
+
+# v3.14 failure-proximity candidate ranking regression
+
+def _v314_test_98_failure_proximity_prioritizes_behavior_under_test(self):
+ import tempfile
+ with tempfile.TemporaryDirectory() as td:
+  td=Path(td); wt=td/'wt'; state=td/'state'; (wt/'tests').mkdir(parents=True); run(['git','init','-q'],cwd=wt)
+  test='''def test_search_projection():
+    db.create_session(session_id="s1")
+    db.append_message("s1", content="before")
+    read_conn = db._get_read_conn()
+    statements = []
+    def context_query_count():
+        return 0
+    db.search_messages("needle", fields=("session_id", "snippet"))
+    assert len(statements) == 0
+    db.search_messages("needle", fields=("session_id", "context"))
+    assert context_query_count() == 1
+'''
+  (wt/'tests/test_hermes_state.py').write_text(test)
+  prod='''class DB:
+    def create_session(self, session_id):
+        return None
+    def append_message(self, session_id, content):
+        return None
+    def _get_read_conn(self):
+        return None
+    def search_messages(self, query, fields=None):
+        if fields and "context" in fields:
+            return self._enrich_context(query)
+        return []
+    def _enrich_context(self, query):
+        return [{"context": query}]
+'''
+  (wt/'hermes_state.py').write_text(prod); run(['git','add','.'],cwd=wt)
+  fake=td/'fake-python'; fake.write_text('#!/bin/sh\necho "FAILED tests/test_hermes_state.py::test_search_projection"\necho "tests/test_hermes_state.py:11: in test_search_projection"\necho "E   assert 0 == 1"\nexit 1\n'); os.chmod(fake,0o755)
+  baseline={'baseline_health':'KNOWN_RED','test_failure_summary':{'signature':'proximity-rank','failure_files':{'tests/test_hermes_state.py':1}}}
+  d=json.loads(run([sys.executable,str(FRESH_PROBE),'--baseline-json',json.dumps(baseline),'--worktree',str(wt),'--state',str(state),'--python',str(fake),'--timeout','5','--max-attempts','1']).stdout)
+  c=d['context_packet']
+  self.assertEqual(c['candidate_symbols'][0], 'search_messages')
+  symbols=[x['symbol'] for x in c['source_definitions']]
+  self.assertIn('search_messages', symbols)
+  self.assertLessEqual(len(symbols), 3)
+  excerpt=next(x['excerpt'] for x in c['source_definitions'] if x['symbol']=='search_messages')
+  self.assertIn('fields and "context" in fields', excerpt)
+
+T.test_98_failure_proximity_prioritizes_behavior_under_test=_v314_test_98_failure_proximity_prioritizes_behavior_under_test
+
