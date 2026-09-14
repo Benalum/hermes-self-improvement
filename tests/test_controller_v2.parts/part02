@@ -1,0 +1,129 @@
+ wt=self.r/'siblinguv-wt';shutil.copytree(self.prod,wt,ignore=shutil.ignore_patterns('.git'));(wt/'pyproject.toml').write_text('[project]\nname="x"\nversion="0.0.0"\n')
+ scripts=wt/'scripts';scripts.mkdir(exist_ok=True);marker=self.r/'sibling-ran';rt=scripts/'run_tests.sh';rt.write_text('#!/bin/sh\necho yes > '+str(marker)+'\nexit 0\n');rt.chmod(0o755)
+ bindir=self.r/'hermes-venv/bin';bindir.mkdir(parents=True);fakepy=bindir/'python';fakepy.write_text('#!/bin/sh\nexec '+sys.executable+' "$@"\n');fakepy.chmod(0o755);uv=bindir/'uv';uv.write_text('#!/bin/sh\nmkdir -p .venv/bin\nexit 0\n');uv.chmod(0o755)
+ state=self.r/'sibling-state';state.mkdir();home=self.r/'empty-home';home.mkdir();env=self.env.copy();env['HOME']=str(home);env['PATH']='/usr/bin:/bin';env.pop('UV_BIN',None);env.pop('HERMES_ROOT',None)
+ d=json.loads(run([sys.executable,str(BASELINE_VALIDATE),'--production',str(self.prod),'--worktree',str(wt),'--baseline',self.base,'--python',str(fakepy),'--state',str(state),'--timeout','10','--cache-seconds','3600'],env=env).stdout)
+ self.assertEqual(d['dev_sync']['exit'],0);self.assertEqual(Path(d['dev_sync']['executable']),uv.resolve());self.assertEqual(d['dev_sync']['source'],'python-sibling');self.assertTrue(marker.exists());self.assertEqual(d['baseline_health'],'PASS')
+
+T.test_38_uv_sibling_of_hermes_python=_v28_test_38_uv_sibling_of_hermes_python
+
+
+def _v29_test_39_uv_home_hermes_discovery(self):
+ wt=self.r/'homehermes-wt';shutil.copytree(self.prod,wt,ignore=shutil.ignore_patterns('.git'));(wt/'pyproject.toml').write_text('[project]\nname="x"\nversion="0.0.0"\n')
+ scripts=wt/'scripts';scripts.mkdir(exist_ok=True);marker=self.r/'homehermes-ran';rt=scripts/'run_tests.sh';rt.write_text('#!/bin/sh\necho yes > '+str(marker)+'\nexit 0\n');rt.chmod(0o755)
+ home=self.r/'homehermes-home';uvdir=home/'.hermes/bin';uvdir.mkdir(parents=True);uv=uvdir/'uv';uv.write_text('#!/bin/sh\nmkdir -p .venv/bin\nexit 0\n');uv.chmod(0o755)
+ fakepy=self.r/'fake-python';fakepy.write_text('#!/bin/sh\nexec '+sys.executable+' "$@"\n');fakepy.chmod(0o755)
+ state=self.r/'homehermes-state';state.mkdir();env=self.env.copy();env['HOME']=str(home);env['PATH']='/usr/bin:/bin';env.pop('UV_BIN',None);env.pop('HERMES_ROOT',None)
+ d=json.loads(run([sys.executable,str(BASELINE_VALIDATE),'--production',str(self.prod),'--worktree',str(wt),'--baseline',self.base,'--python',str(fakepy),'--state',str(state),'--timeout','10','--cache-seconds','3600'],env=env).stdout)
+ self.assertEqual(d['dev_sync']['exit'],0);self.assertEqual(Path(d['dev_sync']['executable']),uv.resolve());self.assertEqual(d['dev_sync']['source'],'home-hermes');self.assertTrue(marker.exists());self.assertEqual(d['baseline_health'],'PASS')
+
+T.test_39_uv_home_hermes_discovery=_v29_test_39_uv_home_hermes_discovery
+
+# v3.0 baseline-failure/orphan/session-loss regressions
+
+def _v30_test_40_runner_skips_agent_on_failed_baseline(self):
+ c,e=self.controller(10)
+ bv=c/'scripts/baseline_validate.py'
+ bv.write_text('import json\nprint(json.dumps({"cache":"miss","baseline_health":"ATTENTION","environment_ready":True,"tests":{"exit":1,"seconds":12.3,"output":"FAILED synthetic baseline"},"dev_sync":{"exit":0,"seconds":0.1,"mode":"frozen","source":"test","executable":"/bin/true","output":"sync ok"},"cli_version":{"exit":0,"seconds":0.1,"output":"ok"},"cli_help":{"exit":0,"seconds":0.1,"output":"ok"},"test_command":"scripts/run_tests.sh"}))\n')
+ e['FAKE_MODE']='safe'
+ cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,check=False,timeout=30)
+ self.assertEqual(cp.returncode,79)
+ rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text()
+ self.assertIn('SKIPPED_BASELINE_FAILURE',rep);self.assertIn('FAILED synthetic baseline',rep);self.assertIn('Production modified: `no`',rep);self.assertNotIn('\ndone\n',rep)
+
+
+def _v30_test_41_deadline_forwards_hup(self):
+ if not hasattr(signal,'SIGHUP'): self.skipTest('no SIGHUP')
+ marker=self.r/'child-hup.pid';code=f'import os,time,pathlib;pathlib.Path({str(marker)!r}).write_text(str(os.getpid()));time.sleep(30)'
+ p=subprocess.Popen([sys.executable,str(DEADLINE),'20','--',sys.executable,'-c',code],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+ import time as _time
+ for _ in range(50):
+  if marker.exists(): break
+  _time.sleep(.05)
+ self.assertTrue(marker.exists());child=int(marker.read_text());os.kill(p.pid, signal.SIGHUP);self.assertEqual(p.wait(timeout=5),129);p.stdout.close() if p.stdout else None;_time.sleep(.1)
+ with self.assertRaises(ProcessLookupError): os.kill(child,0)
+
+
+def _v30_test_42_runner_tracks_watchdog_and_hup(self):
+ t=RUNNER.read_text();self.assertIn('WATCHDOG_PID=$!',t);self.assertIn('trap cleanup EXIT INT TERM HUP',t);self.assertIn('kill -TERM "$WATCHDOG_PID"',t)
+
+
+def _v30_test_43_runner_has_orphan_agent_gate(self):
+ t=RUNNER.read_text();self.assertIn('--source self-improvement',t);self.assertIn('existing Hermes self-improvement agent process(es)',t);self.assertIn('exit 75',t)
+
+T.test_40_runner_skips_agent_on_failed_baseline=_v30_test_40_runner_skips_agent_on_failed_baseline
+T.test_41_deadline_forwards_hup=_v30_test_41_deadline_forwards_hup
+T.test_42_runner_tracks_watchdog_and_hup=_v30_test_42_runner_tracks_watchdog_and_hup
+T.test_43_runner_has_orphan_agent_gate=_v30_test_43_runner_has_orphan_agent_gate
+
+
+# v3.1 canonical full-suite dependency profile regression
+
+def _v31_test_44_baseline_uses_all_plus_dev_when_available(self):
+ wt=self.r/'all-dev-wt';shutil.copytree(self.prod,wt,ignore=shutil.ignore_patterns('.git'))
+ (wt/'pyproject.toml').write_text('[project]\nname="x"\nversion="0.0.0"\n[project.optional-dependencies]\nall=[]\ndev=[]\n')
+ scripts=wt/'scripts';scripts.mkdir(exist_ok=True);marker=self.r/'all-dev-ran';rt=scripts/'run_tests.sh';rt.write_text('#!/bin/sh\necho yes > '+str(marker)+'\nexit 0\n');rt.chmod(0o755)
+ bindir=self.r/'all-dev-bin';bindir.mkdir();uvlog=self.r/'all-dev-uvargs';uv=bindir/'uv';uv.write_text('#!/bin/sh\necho "$@" > '+str(uvlog)+'\nmkdir -p .venv/bin\nexit 0\n');uv.chmod(0o755)
+ state=self.r/'all-dev-state';state.mkdir();env=self.env.copy();env['PATH']=str(bindir)+os.pathsep+env.get('PATH','')
+ d=json.loads(run([sys.executable,str(BASELINE_VALIDATE),'--production',str(self.prod),'--worktree',str(wt),'--baseline',self.base,'--python',str(self.py),'--state',str(state),'--timeout','10','--cache-seconds','3600'],env=env).stdout)
+ args=uvlog.read_text().strip();self.assertIn('sync',args);self.assertIn('--extra all',args);self.assertIn('--extra dev',args);self.assertLess(args.index('--extra all'),args.index('--extra dev'))
+ self.assertEqual(d['dependency_profile'],'all+dev');self.assertEqual(d['dev_sync']['profile'],'all+dev');self.assertTrue(marker.exists());self.assertEqual(d['baseline_health'],'PASS')
+
+T.test_44_baseline_uses_all_plus_dev_when_available=_v31_test_44_baseline_uses_all_plus_dev_when_available
+
+
+# v3.1.1 Python 3.9 compatibility regression
+
+def _v311_test_45_baseline_validator_without_tomllib(self):
+ import builtins, runpy
+ orig=builtins.__import__
+ def no_tomllib(name, globals=None, locals=None, fromlist=(), level=0):
+  if name=='tomllib': raise ModuleNotFoundError("simulated Python <3.11")
+  return orig(name, globals, locals, fromlist, level)
+ builtins.__import__=no_tomllib
+ try:
+  ns=runpy.run_path(str(BASELINE_VALIDATE))
+ finally:
+  builtins.__import__=orig
+ py=self.r/'compat-pyproject.toml'
+ py.write_text('[project]\nname="x"\nversion="0.0.0"\n[project.optional-dependencies]\nall=[]\ndev=[]\n')
+ self.assertEqual(ns['detect_optional_extras'](py), {'all','dev'})
+
+T.test_45_baseline_validator_without_tomllib=_v311_test_45_baseline_validator_without_tomllib
+
+# v3.2 known-red research baseline + CI-parity differential gate regressions
+
+def _v32_test_46_baseline_classifies_and_caches_known_red(self):
+ wt=self.r/'knownred-wt';shutil.copytree(self.prod,wt,ignore=shutil.ignore_patterns('.git'))
+ (wt/'pyproject.toml').write_text('[project]\nname="x"\nversion="0.0.0"\n[project.optional-dependencies]\nall=[]\ndev=[]\n')
+ scripts=wt/'scripts';scripts.mkdir(exist_ok=True)
+ rt=scripts/'run_tests.sh';rt.write_text('#!/bin/sh\necho "=== 1 files with test failures (2 tests failed) ==="\necho "  tests/test_bad.py  (2 tests failed)"\nexit 1\n');rt.chmod(0o755)
+ bindir=self.r/'knownred-bin';bindir.mkdir();uv=bindir/'uv';uv.write_text('#!/bin/sh\nmkdir -p .venv/bin\nexit 0\n');uv.chmod(0o755)
+ state=self.r/'knownred-state';state.mkdir();env=self.env.copy();env['PATH']=str(bindir)+os.pathsep+env.get('PATH','')
+ cmd=[sys.executable,str(BASELINE_VALIDATE),'--production',str(self.prod),'--worktree',str(wt),'--baseline',self.base,'--python',str(self.py),'--state',str(state),'--timeout','10','--cache-seconds','3600']
+ d=json.loads(run(cmd,env=env).stdout)
+ self.assertEqual(d['baseline_health'],'KNOWN_RED');self.assertEqual(d['test_failure_summary']['failure_files'],{'tests/test_bad.py':2});self.assertEqual(d['test_failure_summary']['failed_test_count'],2);self.assertEqual(d['cache'],'miss')
+ d2=json.loads(run(cmd,env=env).stdout);self.assertEqual(d2['cache'],'hit-red');self.assertEqual(d2['baseline_health'],'KNOWN_RED')
+
+
+def _write_knownred_validator(path, evidence):
+ payload=json.dumps(evidence)
+ path.write_text('import json, pathlib\nd='+repr(evidence)+'\np=pathlib.Path(d["cache_file"]);p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(d))\nprint(json.dumps(d))\n')
+
+
+def _v32_test_47_runner_allows_known_red_research_only_when_off(self):
+ c,e=self.controller(10); evidence_path=c/'state/known-red.json'; evidence={"cache":"miss","cache_file":str(evidence_path),"baseline_health":"KNOWN_RED","environment_ready":True,"tests":{"exit":1,"seconds":1,"output":"red"},"test_failure_summary":{"failure_files":{"tests/test_bad.py":2},"no_run_files":[],"failed_test_count":2,"signature":"x"},"dev_sync":{"exit":0,"seconds":0.1,"mode":"frozen","source":"test","executable":"/bin/true","output":"sync ok"},"cli_version":{"exit":0,"seconds":0.1,"output":"ok"},"cli_help":{"exit":0,"seconds":0.1,"output":"ok"},"test_command":"scripts/run_tests.sh"}
+ _write_knownred_validator(c/'scripts/baseline_validate.py', evidence)
+ e['FAKE_MODE']='none';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,timeout=30)
+ self.assertEqual(cp.returncode,0);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('KNOWN_RED',rep);self.assertIn('Discovery/Triage Classifier',rep);self.assertIn('Decision: `NO_CHANGE`',rep);self.assertIn('Production modified: `no`',rep);self.assertFalse((self.prod/'skills/demo/SKILL.md').exists())
+
+
+def _v32_test_48_runner_blocks_known_red_when_promotion_enabled(self):
+ c,e=self.controller(10);pol=c/'config/promotion_policy.env';pol.write_text(pol.read_text().replace('AUTO_PROMOTE_MODE=off','AUTO_PROMOTE_MODE=skills_only'))
+ evidence_path=c/'state/known-red.json'; evidence={"cache":"miss","cache_file":str(evidence_path),"baseline_health":"KNOWN_RED","environment_ready":True,"tests":{"exit":1,"seconds":1,"output":"red"},"test_failure_summary":{"failure_files":{"tests/test_bad.py":2},"no_run_files":[],"failed_test_count":2,"signature":"x"},"dev_sync":{"exit":0,"seconds":0.1,"mode":"frozen","source":"test","executable":"/bin/true","output":"sync ok"},"cli_version":{"exit":0,"seconds":0.1,"output":"ok"},"cli_help":{"exit":0,"seconds":0.1,"output":"ok"},"test_command":"scripts/run_tests.sh"}
+ _write_knownred_validator(c/'scripts/baseline_validate.py', evidence)
+ e['FAKE_MODE']='safe';cp=run(['bash',str(c/'scripts/run_daily_improvement.sh')],cwd=self.r,env=e,check=False,timeout=30)
+ self.assertEqual(cp.returncode,79);rep=max((c/'reports').glob('*.md'),key=lambda x:x.stat().st_mtime).read_text();self.assertIn('SKIPPED_BASELINE_FAILURE',rep);self.assertFalse((self.prod/'skills/demo/SKILL.md').exists())
+
+
+def _red_evidence_file(self, count=2):
